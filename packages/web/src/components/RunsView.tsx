@@ -231,13 +231,19 @@ export function UpdatePanel() {
             <Badge tone="accent">
               {sp.behindBy ? `${sp.behindBy} commits behind` : "update available"}
             </Badge>
+          ) : !sp?.currentCommit ? (
+            // Without a baseline there is nothing to compare; saying "up to
+            // date" would be a claim sparktop cannot support.
+            <Badge tone="neutral" title="This build does not record which commit it was built from">
+              unknown build
+            </Badge>
           ) : (
             <Badge tone="good">up to date</Badge>
           )}
         </div>
-        {sp?.currentCommit && (
-          <div className="mt-0.5 font-mono text-[11px] text-ink-muted">{sp.currentCommit.slice(0, 8)}</div>
-        )}
+        <div className="mt-0.5 font-mono text-[11px] text-ink-muted">
+          {sp?.currentCommit ? sp.currentCommit.slice(0, 8) : "commit unknown — set SPARKTOP_COMMIT at build time"}
+        </div>
         {sp?.updateAvailable && sp.latestMessage && (
           <p className="mt-1 text-[11px] leading-relaxed text-ink-secondary">
             Latest: {sp.latestMessage}

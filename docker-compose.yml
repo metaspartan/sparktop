@@ -12,6 +12,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        # Lets the container report its own version. Left empty, sparktop says
+        # "unknown build" rather than claiming to be current.
+        SPARKTOP_COMMIT: "${SPARKTOP_COMMIT:-}"
     image: ghcr.io/metaspartan/sparktop:latest
     container_name: sparktop
     restart: unless-stopped

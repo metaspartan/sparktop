@@ -85,44 +85,94 @@ Every node card shows its chassis, so a mixed rack is readable at a glance. The 
   hosts work too — you simply get no fabric section for them.
 - An SSH user on each node. No root and no passwordless sudo required; add the
   user to the `docker` group if you want container metrics.
-- To run sparktop itself: Docker, or [Bun](https://bun.sh) 1.1+.
+- To run sparktop itself: Docker, or [Bun](https://bun.sh) 1.1+. The setup
+  script below picks whichever it finds.
 
 ## Quick start
 
-### Docker Compose (recommended)
+One command, run once, from anywhere that can reach your Sparks over SSH — one
+of the Sparks itself is fine:
 
 ```bash
-git clone https://github.com/metaspartan/sparktop.git
-cd sparktop
-cp .env.example .env
+git clone https://github.com/metaspartan/sparktop.git && cd sparktop
+./scripts/setup.sh ubuntu@10.0.0.11 ubuntu@10.0.0.12
 ```
 
-Put an SSH key where the container can read it, and authorise it on each Spark:
+That generates an SSH key, authorises it on each node (asking for each node's
+password once, and never again), verifies what each one reports, writes the
+node registry, and starts sparktop. Then open <http://localhost:5757>.
+
+Run it with no arguments to be prompted for the node list instead. It is safe to
+re-run: nodes that already trust the key are skipped.
+
+```
+sparktop setup
+
+  ✓ 2 node(s): ubuntu@10.0.0.11 ubuntu@10.0.0.12
+  ✓ Generated ./config/id_ed25519
+  ✓ ubuntu@10.0.0.11 authorised
+  ✓ ubuntu@10.0.0.12 authorised
+
+  Checking what each node reports:
+  ✓ spark-01 — DGX Spark · NVIDIA GB10 · 4 RDMA ports · docker
+  ✓ spark-02 — DGX Spark · NVIDIA GB10 · 4 RDMA ports · docker
+  ✓ Wrote ./config/nodes.json
+```
+
+Useful flags: `--docker` or `--bun` to force how it runs, `--no-start` to
+configure without launching.
+
+### There is nothing to install on the Sparks
+
+sparktop is **agentless**. It runs in one place and reads the others over SSH,
+so adding a node means authorising a key — which the setup script does. Nothing
+is copied to a Spark, no service runs on it, and removing sparktop means
+deleting one key from `~/.ssh/authorized_keys`.
+
+The only thing worth checking per node is that the login user is in the `docker`
+group, which the setup script reports. Without it everything except container
+metrics still works.
+
+### Doing it by hand
+
+<details>
+<summary>Docker Compose</summary>
 
 ```bash
+cp .env.example .env                       # set SPARKTOP_NODES
 ssh-keygen -t ed25519 -f ./config/id_ed25519 -N ""
 for h in 10.0.0.11 10.0.0.12; do ssh-copy-id -i ./config/id_ed25519.pub ubuntu@$h; done
+SPARKTOP_COMMIT=$(git rev-parse HEAD) docker compose up -d
 ```
 
-Set `SPARKTOP_NODES` in `.env`, then:
+The image is multi-arch (`linux/arm64` + `linux/amd64`), so it runs on a Spark
+or on anything else that can reach them.
+</details>
 
-```bash
-docker compose up -d
-```
-
-Open <http://localhost:5757>. The image is multi-arch (`linux/arm64` + `linux/amd64`), so it runs on a Spark itself or on any other machine that can reach them.
-
-If you would rather not touch a config file, start it with no nodes and the web UI walks you through adding them — each one is verified over SSH before it is saved.
-
-### Without Docker
+<details>
+<summary>Without Docker</summary>
 
 Requires [Bun](https://bun.sh) 1.1+.
 
 ```bash
-bun install
-bun run build:web
-bun run start
+bun install && bun run build:web && bun run start
 ```
+</details>
+
+<details>
+<summary>No config file at all</summary>
+
+Start with no nodes and the web UI walks you through adding them, verifying each
+over SSH before it is saved. Or declare them in the environment:
+
+```bash
+export SPARKTOP_NODES="ubuntu@10.0.0.11,ubuntu@10.0.0.12"
+export SPARKTOP_SSH_KEY=/config/id_ed25519
+```
+</details>
+
+> The setup script targets Linux and macOS, which is what the Sparks run. On
+> Windows, use Docker Desktop or WSL.
 
 ## Terminal UI
 
@@ -332,6 +382,7 @@ Everything is optional; nodes can also be managed at runtime through the API or 
 | `SPARKTOP_SECRET` | — | Key for encrypting stored credentials |
 | `SPARKTOP_TOKEN` | — | If set, API and WebSocket require this bearer token |
 | `SPARKTOP_ENABLE_CONTROL` | — | `1` allows container start/stop/restart and image swaps |
+| `SPARKTOP_COMMIT` | from git | Commit this build came from. Set as a Docker build arg, since `.git` is not in the image |
 | `SPARKTOP_PORT` | `5757` | Listen port |
 | `SPARKTOP_HOST` | `0.0.0.0` | Bind address |
 | `SPARKTOP_CONFIG` | `./config/nodes.json` | Node registry path |

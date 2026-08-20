@@ -36,6 +36,12 @@ RUN apk add --no-cache openssh-client tini && \
     addgroup -g 10001 sparktop && \
     adduser -D -u 10001 -G sparktop sparktop
 
+# Baked at build time so a running image can say which commit it is. `.git` is
+# excluded from the build context and git is not installed, so without this the
+# update check has no baseline and would report "up to date" indefinitely.
+ARG SPARKTOP_COMMIT=""
+ENV SPARKTOP_COMMIT=$SPARKTOP_COMMIT
+
 ENV NODE_ENV=production \
     SPARKTOP_PORT=5757 \
     SPARKTOP_HOST=0.0.0.0 \
