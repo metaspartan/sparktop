@@ -225,3 +225,18 @@ body {
   background: var(--axis);
   border-radius: 5px;
 }
+
+/*
+ * Horizontal scroll without a visible bar.
+ *
+ * Used by the header's cluster-totals row: on a phone the seven figures do not
+ * fit, and letting them wrap turned a sticky header into a quarter of the
+ * screen. Scrolling keeps it one row; the bar itself would be chrome on chrome.
+ */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}

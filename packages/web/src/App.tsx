@@ -124,16 +124,28 @@ function Header({
 
   return (
     <header className="sticky top-0 z-30 border-b border-edge bg-surface-1/90 backdrop-blur">
-      <div className="mx-auto flex max-w-[1800px] flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2">
-        <span className="text-[17px] font-bold tracking-tight text-ink">
+      {/*
+        Three zones: name, cluster totals, actions.
+        `xl:pl-10` mirrors <main>, whose extra left padding makes room for the
+        section drag handles — without it the wordmark sits 24px left of the
+        content it heads. On narrow screens the totals wrap to their own row,
+        which is why the zones are flex with an explicit order rather than a
+        three-column grid.
+      */}
+      <div className="mx-auto flex max-w-[1800px] flex-wrap items-center gap-x-4 gap-y-1.5 px-4 py-2 xl:pl-10">
+        <span className="order-1 text-[17px] font-bold tracking-tight text-ink">
           spark<span style={{ color: "var(--accent)" }}>top</span>
         </span>
 
         {/* Cluster totals live in the header rather than as a section: it is a
             one-line summary, and this keeps the node cards at the top. */}
-        {snap && <SummaryStrip snap={snap} />}
+        {snap && (
+          <div className="order-3 w-full min-w-0 border-t border-edge pt-1.5 lg:order-2 lg:w-auto lg:flex-1 lg:border-0 lg:pt-0">
+            <SummaryStrip snap={snap} />
+          </div>
+        )}
 
-        <div className="ml-auto flex items-center gap-2">
+        <div className="order-2 ml-auto flex items-center gap-2 lg:order-3 lg:ml-0">
           <span
             className="flex w-[74px] items-center gap-1.5 text-[11px] text-ink-secondary"
             title={`WebSocket ${conn}`}
@@ -199,9 +211,14 @@ function SummaryStrip({ snap }: { snap: ClusterSnapshot }) {
   ];
 
   return (
-    <div className="order-last flex w-full flex-wrap items-center gap-x-7 gap-y-2 border-t border-edge pt-2 lg:order-none lg:w-auto lg:border-0 lg:pt-0">
+    /*
+     * Centred between the wordmark and the actions on wide screens; a plain
+     * wrapping row on narrow ones. Placement is owned by the header, so this
+     * only decides how the figures sit relative to each other.
+     */
+    <div className="no-scrollbar flex flex-nowrap items-center gap-x-6 overflow-x-auto lg:justify-center">
       {items.map((i) => (
-        <div key={i.label} className="min-w-[118px] flex-1 sm:flex-none">
+        <div key={i.label} className="w-[112px] flex-none lg:w-[118px]">
           <div className="flex items-baseline gap-2">
             <span className="text-[10px] uppercase tracking-wide text-ink-muted">{i.label}</span>
             <span className="tnum text-[14px] font-semibold leading-none text-ink">{i.value}</span>
