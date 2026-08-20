@@ -13,14 +13,23 @@ permissions:
 
 jobs:
   test:
-    name: Typecheck, test, build
+    name: Typecheck, test, build (bun ${{ matrix.bun }})
     runs-on: ubuntu-latest
+    strategy:
+      # Both legs always run: a break on `latest` is useful information but must
+      # not mask a real failure on the version the project claims to support.
+      fail-fast: false
+      matrix:
+        # The floor from package.json engines, and whatever is current — so the
+        # supported minimum is actually exercised, and a future Bun that breaks
+        # the build is caught here rather than by a user.
+        bun: ["1.4.0", "latest"]
     steps:
       - uses: actions/checkout@v4
 
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: ${{ matrix.bun }}
 
       - name: Install dependencies
         run: bun install --frozen-lockfile

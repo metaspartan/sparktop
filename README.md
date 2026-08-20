@@ -20,7 +20,7 @@ they are serving, and the RDMA fabric between them.
 ## Quick start
 
 You need one or more DGX Sparks reachable over SSH, and either Docker or
-[Bun](https://bun.sh) 1.1+ on the machine you run this from. Nothing gets
+[Bun](https://bun.sh) 1.4+ on the machine you run this from. Nothing gets
 installed on the Sparks themselves.
 
 ```bash
@@ -100,7 +100,7 @@ SPARKTOP_COMMIT=$(git rev-parse HEAD) docker compose up -d
 The image is multi-arch (`linux/arm64` + `linux/amd64`), so it runs on a Spark or
 on anything else that can reach them.
 
-**Without Docker** — requires [Bun](https://bun.sh) 1.1+:
+**Without Docker** — requires [Bun](https://bun.sh) 1.4+:
 
 ```bash
 bun install && bun run build:web && bun run start

@@ -7,7 +7,7 @@
 # needs an SSH client path to the nodes, not to be one of them.
 
 # ---- Stage 1: dependencies -------------------------------------------------
-FROM oven/bun:1-alpine AS deps
+FROM oven/bun:1.4-alpine AS deps
 WORKDIR /app
 
 COPY package.json bun.lock* ./
@@ -27,7 +27,7 @@ COPY packages/ packages/
 RUN bun run build:web
 
 # ---- Stage 3: runtime ------------------------------------------------------
-FROM oven/bun:1-alpine AS runtime
+FROM oven/bun:1.4-alpine AS runtime
 WORKDIR /app
 
 # openssh-client is not used for transport (ssh2 speaks the protocol directly),
