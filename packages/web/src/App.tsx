@@ -9,6 +9,7 @@ import { Sortable } from "./components/Sortable";
 import { Settings } from "./components/Settings";
 import { Setup } from "./components/Setup";
 import { FabricView } from "./components/FabricView";
+import { InferenceView } from "./components/InferenceView";
 import { NodeCard } from "./components/NodeCard";
 import { TimeChart, type ChartSeries } from "./components/TimeChart";
 
@@ -30,6 +31,7 @@ export default function App() {
         ))}
       </div>
     ),
+    inference: snapshot && <InferenceView nodes={snapshot.nodes} history={history} themeKey={resolved} />,
     fabric: snapshot && <FabricView snap={snapshot} history={history} themeKey={resolved} />,
     jobs: snapshot && <Jobs jobs={snapshot.jobs} />,
     charts: snapshot && <ClusterCharts snap={snapshot} history={history} themeKey={resolved} />,
@@ -184,6 +186,13 @@ function SummaryStrip({ snap }: { snap: ClusterSnapshot }) {
     { label: "CPU", value: fmtPct(t.cpuUsagePct, 0), sub: `${t.cpuCores} cores`, pct: t.cpuUsagePct, tone: utilTone(t.cpuUsagePct) },
     { label: "Temp", value: fmtTemp(t.maxTempC), sub: "peak" },
     { label: "Power", value: fmtWatts(t.powerDrawW), sub: "GPU" },
+    ...(t.inferenceEndpoints > 0
+      ? [{
+          label: "Tokens",
+          value: `${t.tokensPerSec}/s`,
+          sub: `${t.requestsRunning} running${t.requestsWaiting ? ` · ${t.requestsWaiting} queued` : ""}`,
+        }]
+      : []),
     { label: "Nodes", value: `${t.nodesOnline}/${t.nodes}`, sub: `${t.containers} containers` },
   ];
 

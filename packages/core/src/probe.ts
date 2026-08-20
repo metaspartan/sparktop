@@ -74,7 +74,7 @@ const FABRIC_PATHS = [
  * nvidia-smi is invoked exactly once and its output reused, because it is by
  * far the most expensive single command here (~150-250ms on GB10).
  */
-export const FAST_PROBE = `#!/bin/sh
+const FAST_PROBE_BASE = `#!/bin/sh
 set -u
 S() { printf '${RS}%s\\n' "$1"; }
 
@@ -157,6 +157,63 @@ S cte
 date +%s%3N
 `;
 
+/** An inference server found by the slow tier's discovery pass. */
+export interface DiscoveredEndpoint {
+  port: number;
+  /** How it answered: Prometheus metrics, Ollama's JSON API, or OpenAI-only. */
+  kind: "metrics" | "ollama" | "openai";
+}
+
+/**
+ * Fast probe, with a scrape appended for each known inference endpoint.
+ *
+ * The port list comes from the slow tier, so the fast path never pays for
+ * discovery — it just re-reads the handful of endpoints already identified.
+ * Scraping happens here rather than from the sparktop host because these
+ * servers usually bind 127.0.0.1 on the node.
+ */
+export function buildFastProbe(endpoints: DiscoveredEndpoint[] = []): string {
+  if (!endpoints.length) return FAST_PROBE_BASE;
+
+  const scrapes = endpoints
+    .map((e) => {
+      const url =
+        e.kind === "ollama"
+          ? `http://127.0.0.1:${e.port}/api/ps`
+          : e.kind === "openai"
+            ? `http://127.0.0.1:${e.port}/v1/models`
+            : `http://127.0.0.1:${e.port}/metrics`;
+      /*
+       * Filter on the node, not here. A vLLM /metrics body is ~32KB and most of
+       * it is Python GC and process instrumentation that sparktop never reads;
+       * keeping only the engine's own metric families cuts what crosses the SSH
+       * channel every second by roughly 90%. The engine signature survives,
+       * because that is one of the prefixes kept.
+       */
+      const fetchCmd =
+        e.kind === "metrics"
+          ? `curl -s -m 2 '${url}' 2>/dev/null | grep -E '^(vllm:|sglang:|llamacpp:|tgi_|nv_inference)' | head -c 16384`
+          : `curl -s -m 2 '${url}' 2>/dev/null | head -c 4096`;
+      return [
+        `printf 'EP${US}%s${US}%s\\n' '${e.port}' '${e.kind}'`,
+        fetchCmd,
+        `printf '\\n${US}END${US}\\n'`,
+      ].join("\n");
+    })
+    .join("\n");
+
+  return `${FAST_PROBE_BASE}
+S infer
+${scrapes}
+
+S infer_ts
+date +%s%3N
+`;
+}
+
+/** Default fast probe, before any endpoint has been discovered. */
+export const FAST_PROBE = FAST_PROBE_BASE;
+
 /**
  * Slow tier: inventory and anything expensive.
  *
@@ -214,6 +271,40 @@ done
 
 S fabricmap
 ls -d /sys/class/infiniband/*/device/net/* 2>/dev/null
+
+S listeners
+# Locally-reachable listening TCP ports. Fabric-bound sockets are excluded:
+# on a Spark those are NCCL's own rendezvous sockets, dozens of them, and none
+# is an inference server.
+ss -tlnH 2>/dev/null | awk '{print $4}' | grep -vE '^10\.100\.' | sed 's/.*://' \
+  | grep -E '^[0-9]+$' | sort -un | head -60
+
+S probe_endpoints
+# Identify what is actually answering on each candidate port. Probed from the
+# node itself because inference servers commonly bind 127.0.0.1, where the
+# sparktop host cannot reach them.
+for p in \$(ss -tlnH 2>/dev/null | awk '{print \$4}' | grep -vE '^10\.100\.' | sed 's/.*://' | grep -E '^[0-9]+\$' | sort -un | head -60); do
+  case " 22 25 53 123 631 5757 5432 3306 6379 9090 111 2049 " in
+    *" \$p "*) continue ;;
+  esac
+  # Match the engine signature across the whole body, not a prefix of it. A
+  # vLLM /metrics opens with several hundred bytes of Python GC boilerplate, so
+  # truncating the response before matching finds nothing at all.
+  sig=\$(curl -s -m 2 "http://127.0.0.1:\$p/metrics" 2>/dev/null \\
+        | grep -m1 -oE '^(vllm:|sglang:|llamacpp:|tgi_|nv_inference)')
+  if [ -n "\$sig" ]; then
+    printf 'PORT${US}%s${US}metrics\\n' "\$p"
+    continue
+  fi
+  ol=\$(curl -s -m 1 "http://127.0.0.1:\$p/api/ps" 2>/dev/null | head -c 200)
+  case "\$ol" in
+    *models*) printf 'PORT${US}%s${US}ollama\\n' "\$p"; continue ;;
+  esac
+  oa=\$(curl -s -m 1 "http://127.0.0.1:\$p/v1/models" 2>/dev/null | head -c 200)
+  case "\$oa" in
+    *object*|*data*) printf 'PORT${US}%s${US}openai\\n' "\$p" ;;
+  esac
+done
 
 S docker
 if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then

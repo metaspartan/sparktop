@@ -22,10 +22,19 @@ class Ring {
     this.buf = new Float64Array(capacity);
   }
 
+  /** Consecutive empty samples, used to retire a series that has gone silent. */
+  private blank = 0;
+
   push(v: number): void {
     this.buf[this.head] = v;
     this.head = (this.head + 1) % this.capacity;
     if (this.len < this.capacity) this.len++;
+    this.blank = Number.isNaN(v) ? this.blank + 1 : 0;
+  }
+
+  /** True once every retained sample is empty, so the series holds nothing. */
+  get isEmpty(): boolean {
+    return this.blank >= this.len && this.len >= this.capacity;
   }
 
   /** Oldest-first copy. NaN becomes null so charts render a gap. */
@@ -96,6 +105,14 @@ export function historySample(snap: ClusterSnapshot): Record<string, number> {
     out[`link:${l.id}:ba`] = l.bToAGbps;
   }
 
+  for (const n of snap.nodes) {
+    for (const e of n.inference ?? []) {
+      // NaN, not 0, before the first delta exists — an unknown rate is a gap.
+      out[`infer:${e.id}:tokens`] = e.generationTokensPerSec ?? NaN;
+      out[`infer:${e.id}:running`] = e.requestsRunning ?? NaN;
+    }
+  }
+
   return out;
 }
 
@@ -139,10 +156,29 @@ export class HistoryStore {
       if (!this.written.has(key)) ring.push(NaN);
     }
 
+    /*
+     * Retire series that have scrolled entirely empty.
+     *
+     * Series are created on demand — one per node metric, per link, per
+     * inference endpoint — and a cluster that churns nodes or restarts servers
+     * would otherwise accumulate ring buffers for things that no longer exist.
+     * Waiting until the whole window is blank means a brief outage keeps its
+     * history and its gap, while something genuinely gone is reclaimed.
+     */
+    for (const [key, ring] of this.series) {
+      if (ring.isEmpty) this.series.delete(key);
+    }
+
     // Appended last, so `ring()` above could use its length as the count of
     // samples a newly created series had missed.
     this.ts.push(snap.ts);
     if (this.ts.length > this.capacity) this.ts.shift();
+  }
+
+  /** Approximate retained bytes, for the diagnostics endpoint. */
+  get approxBytes(): number {
+    // One Float64Array of `capacity` per series, plus the shared timeline.
+    return this.series.size * this.capacity * 8 + this.ts.length * 8;
   }
 
   payload(): HistoryPayload {
@@ -151,12 +187,31 @@ export class HistoryStore {
     return { ts: [...this.ts], series };
   }
 
-  /** Drop series belonging to nodes that no longer exist. */
-  prune(validNodeIds: Set<string>): void {
+  /**
+   * Drop series that can no longer receive samples.
+   *
+   * Series are created on demand, so without this a cluster that churns nodes,
+   * links or inference endpoints would accumulate ring buffers forever. Keys
+   * are namespaced by kind: `<nodeId>:<metric>`, `cluster:*`, `link:<id>:*` and
+   * `infer:<nodeId>:<port>:*`.
+   */
+  prune(validNodeIds: Set<string>, validKeys?: Set<string>): void {
     for (const key of this.series.keys()) {
-      const prefix = key.split(":")[0]!;
-      if (prefix === "cluster" || prefix === "link") continue;
+      const parts = key.split(":");
+      const prefix = parts[0]!;
+      if (prefix === "cluster") continue;
+      if (prefix === "link" || prefix === "infer") {
+        // `infer:<nodeId>:<port>:<metric>` — the node id is the second field.
+        if (prefix === "infer" && parts[1] && !validNodeIds.has(parts[1])) this.series.delete(key);
+        else if (validKeys && !validKeys.has(key)) this.series.delete(key);
+        continue;
+      }
       if (!validNodeIds.has(prefix)) this.series.delete(key);
     }
+  }
+
+  /** Number of retained series, for diagnostics and memory bounds. */
+  get seriesCount(): number {
+    return this.series.size;
   }
 }

@@ -8,6 +8,7 @@
  */
 
 export * from "./variants.ts";
+export * from "./inference.ts";
 export * from "./types.ts";
 export * from "./format.ts";
 // Safe in a browser: this module imports only types, and the browser needs

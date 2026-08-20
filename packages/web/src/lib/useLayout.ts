@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-export type SectionId = "nodes" | "fabric" | "jobs" | "charts";
+export type SectionId = "nodes" | "inference" | "fabric" | "jobs" | "charts";
 
 /**
  * Section order. Nodes lead because the machines themselves are what an
@@ -19,14 +19,15 @@ export type SectionId = "nodes" | "fabric" | "jobs" | "charts";
  */
 export const SECTIONS: { id: SectionId; label: string; description: string }[] = [
   { id: "nodes", label: "Spark nodes", description: "Per-node GPU, memory, processes and containers" },
+  { id: "inference", label: "Inference", description: "Detected engines, tokens/sec, requests in flight" },
   { id: "fabric", label: "Interconnect", description: "Topology, per-link throughput and health" },
   { id: "jobs", label: "Distributed workloads", description: "Jobs spanning more than one node" },
   { id: "charts", label: "Comparison charts", description: "Cross-node trends over time" },
 ];
 
 const DEFAULT_ORDER: SectionId[] = SECTIONS.map((s) => s.id);
-// v2: the section set changed, so v1 layouts are intentionally not carried over.
-const KEY = "sparktop-layout-v2";
+// v3: the section set changed again, so older layouts are not carried over.
+const KEY = "sparktop-layout-v3";
 
 export type Density = "comfortable" | "compact";
 

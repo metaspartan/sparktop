@@ -12,9 +12,10 @@
 import { EventEmitter } from "node:events";
 import { readFile } from "node:fs/promises";
 import { Client, type ConnectConfig } from "ssh2";
-import { FAST_PROBE, SLOW_PROBE } from "./probe.ts";
+import { SLOW_PROBE, buildFastProbe, type DiscoveredEndpoint } from "./probe.ts";
 import { decryptSecret } from "./crypto.ts";
 import { detectVariant, isDgxSpark } from "./variants.ts";
+import { readMetrics, readOllama, readOpenAiModels } from "./inference.ts";
 import type {
   DockerContainer,
   FabricErrors,
@@ -25,6 +26,7 @@ import type {
   NodeConfig,
   NodeSnapshot,
   NodeStatus,
+  InferenceEndpoint,
   ThermalSensor,
 } from "./types.ts";
 import {
@@ -54,6 +56,8 @@ import {
   parseNetDev,
   parseNetInfo,
   parseRateGbps,
+  parseDiscoveredEndpoints,
+  parseInferenceScrapes,
   parseCpuTimes as _pct,
   splitSections,
   type CpuTimes,
@@ -115,6 +119,18 @@ export class NodeCollector extends EventEmitter {
   private prevNet = new Map<string, { rx: Sample; tx: Sample }>();
   private prevFabric = new Map<string, { rdmaRx: Sample; rdmaTx: Sample; tcpRx: Sample; tcpTx: Sample }>();
   private prevFaults = new Map<string, number>();
+  /** Cumulative inference counters, for deriving token and request rates. */
+  private prevInference = new Map<string, { gen: Sample; prompt: Sample; finished: Sample }>();
+
+  /*
+   * Discovery is done by the slow tier; the fast probe is then rebuilt to
+   * scrape exactly those endpoints. Caching the script avoids regenerating it
+   * every second, and comparing the signature avoids rebuilding when nothing
+   * changed.
+   */
+  private endpoints: DiscoveredEndpoint[] = [];
+  private fastScript = buildFastProbe([]);
+  private endpointSig = "";
 
   // Slow-tier results, merged into every fast snapshot.
   private slow: SlowState = emptySlow();
@@ -291,7 +307,7 @@ export class NodeCollector extends EventEmitter {
     this.fastInFlight = true;
     const t0 = Date.now();
     try {
-      const raw = await this.exec(FAST_PROBE, 15_000);
+      const raw = await this.exec(this.fastScript, 15_000);
       const snap = this.buildSnapshot(splitSections(raw), Date.now() - t0);
       this.lastSnapshot = snap;
       this.emit("snapshot", snap);
@@ -323,6 +339,14 @@ export class NodeCollector extends EventEmitter {
         docker,
         loaded: true,
       };
+
+      const found = parseDiscoveredEndpoints(s.probe_endpoints);
+      const sig = found.map((e) => `${e.port}:${e.kind}`).join(",");
+      if (sig !== this.endpointSig) {
+        this.endpointSig = sig;
+        this.endpoints = found;
+        this.fastScript = buildFastProbe(found);
+      }
     } catch {
       // A failed slow poll keeps the previous inventory; fast metrics continue.
     } finally {
@@ -367,6 +391,7 @@ export class NodeCollector extends EventEmitter {
       docker: { available: false, containers: [] },
       network: { interfaces: [] },
       fabric: { ports: [] },
+      inference: [],
     };
   }
 
@@ -459,6 +484,8 @@ export class NodeCollector extends EventEmitter {
       bootTime: ts - load.uptimeSec * 1000,
     };
 
+    const inference = this.buildInference(s, counterTs);
+
     return {
       id: this.id,
       label: this.label,
@@ -485,7 +512,105 @@ export class NodeCollector extends EventEmitter {
       docker: this.slow.docker,
       network: { interfaces },
       fabric: { ports },
+      inference,
     };
+  }
+
+  /**
+   * Normalise each scraped inference endpoint and derive its rates.
+   *
+   * Token counters are cumulative, so throughput is a delta over measured wall
+   * time — the same treatment as fabric bytes, and for the same reason: the
+   * interval actually elapsed is not the interval configured.
+   */
+  private buildInference(s: Record<string, string>, ts: number): InferenceEndpoint[] {
+    const out: InferenceEndpoint[] = [];
+    const scrapes = parseInferenceScrapes(s.infer);
+
+    for (const scrape of scrapes) {
+      const key = String(scrape.port);
+      const reading =
+        scrape.kind === "ollama"
+          ? readOllama(scrape.body)
+          : scrape.kind === "openai"
+            ? { engine: "openai" as const, engineLabel: "OpenAI-compatible", models: readOpenAiModels(scrape.body) }
+            : readMetrics(scrape.body);
+
+      if (!reading) {
+        // The port answered during discovery but not now: report it as present
+        // and unreachable rather than dropping it, so a crashed server is
+        // visible instead of silently vanishing.
+        out.push(emptyEndpoint(this.id, this.label, scrape.port));
+        continue;
+      }
+
+      const prev = this.prevInference.get(key);
+      const gen = reading.generationTokensTotal;
+      const prompt = reading.promptTokensTotal;
+      const finished = reading.requestsFinishedTotal;
+
+      const rate = (p: Sample | undefined, v: number | undefined): number | null => {
+        if (v === undefined || !p) return null;
+        const dt = (ts - p.t) / 1000;
+        // A restarted server resets its counters; report nothing rather than a
+        // negative or absurd spike.
+        if (dt <= 0 || v < p.value) return null;
+        return Math.round(((v - p.value) / dt) * 10) / 10;
+      };
+
+      const genRate = rate(prev?.gen, gen);
+      const promptRate = rate(prev?.prompt, prompt);
+      const finishedRate = rate(prev?.finished, finished);
+
+      this.prevInference.set(key, {
+        gen: { value: gen ?? 0, t: ts },
+        prompt: { value: prompt ?? 0, t: ts },
+        finished: { value: finished ?? 0, t: ts },
+      });
+
+      /*
+       * Attribute the endpoint to a container by model name.
+       *
+       * The two rarely match literally: a container advertises the repository
+       * id ("deepseek-ai/DeepSeek-V4-Flash-0731") while the server labels its
+       * metrics with the served alias ("deepseek-v4-flash-0731"). Comparing on
+       * alphanumerics only, in either direction, links them.
+       */
+      const norm = (v: string) => v.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const served = reading.models.map(norm).filter(Boolean);
+      const container = this.slow.docker.containers.find((c) => {
+        if (c.state !== "running" || !c.distributed?.model) return false;
+        const want = norm(c.distributed.model);
+        return served.some((m) => m.includes(want) || want.includes(m));
+      });
+
+      out.push({
+        id: `${this.id}:${scrape.port}`,
+        nodeId: this.id,
+        nodeLabel: this.label,
+        port: scrape.port,
+        engine: reading.engine,
+        engineLabel: reading.engineLabel,
+        models: reading.models,
+        reachable: true,
+        requestsRunning: reading.requestsRunning ?? null,
+        requestsWaiting: reading.requestsWaiting ?? null,
+        requestsFinishedTotal: finished ?? null,
+        promptTokensTotal: prompt ?? null,
+        generationTokensTotal: gen ?? null,
+        kvCachePct: reading.kvCachePct ?? null,
+        generationTokensPerSec: genRate,
+        promptTokensPerSec: promptRate,
+        requestsPerMin: finishedRate === null ? null : Math.round(finishedRate * 600) / 10,
+        ...(container ? { containerName: container.name } : {}),
+      });
+    }
+
+    // Forget counters for endpoints that no longer exist.
+    const live = new Set(scrapes.map((x) => String(x.port)));
+    for (const k of this.prevInference.keys()) if (!live.has(k)) this.prevInference.delete(k);
+
+    return out;
   }
 
   private buildGpu(
@@ -769,6 +894,29 @@ export function subnetOf(cidr: string | undefined): string | null {
   const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
   const net = (asInt & mask) >>> 0;
   return `${(net >>> 24) & 255}.${(net >>> 16) & 255}.${(net >>> 8) & 255}.${net & 255}/${prefix}`;
+}
+
+/** A discovered endpoint that stopped answering. */
+function emptyEndpoint(nodeId: string, nodeLabel: string, port: number): InferenceEndpoint {
+  return {
+    id: `${nodeId}:${port}`,
+    nodeId,
+    nodeLabel,
+    port,
+    engine: "unknown",
+    engineLabel: "Unreachable",
+    models: [],
+    reachable: false,
+    requestsRunning: null,
+    requestsWaiting: null,
+    requestsFinishedTotal: null,
+    promptTokensTotal: null,
+    generationTokensTotal: null,
+    kvCachePct: null,
+    generationTokensPerSec: null,
+    promptTokensPerSec: null,
+    requestsPerMin: null,
+  };
 }
 
 export { IDLE_BPS_THRESHOLD };

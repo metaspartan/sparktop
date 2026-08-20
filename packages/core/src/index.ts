@@ -1,4 +1,5 @@
 export * from "./variants.ts";
+export * from "./inference.ts";
 export * from "./types.ts";
 export * from "./probe.ts";
 export * from "./parse.ts";

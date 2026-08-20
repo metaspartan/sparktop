@@ -475,7 +475,14 @@ function rollUp(nodes: NodeSnapshot[]): ClusterSnapshot["totals"] {
   const online = nodes.filter((n) => n.status === "online");
   let vramTotal = 0, vramUsed = 0, cores = 0, cpuSum = 0, memTotal = 0, memUsed = 0, power = 0, containers = 0, gpus = 0;
   let maxTempC: number | null = null;
+  let inferenceEndpoints = 0, tokensPerSec = 0, requestsRunning = 0, requestsWaiting = 0;
   for (const n of online) {
+    for (const e of n.inference ?? []) {
+      inferenceEndpoints++;
+      tokensPerSec += e.generationTokensPerSec ?? 0;
+      requestsRunning += e.requestsRunning ?? 0;
+      requestsWaiting += e.requestsWaiting ?? 0;
+    }
     if (n.gpu) {
       gpus++;
       vramTotal += n.gpu.vramTotalBytes;
@@ -502,6 +509,10 @@ function rollUp(nodes: NodeSnapshot[]): ClusterSnapshot["totals"] {
     powerDrawW: Math.round(power * 10) / 10,
     maxTempC,
     containers,
+    inferenceEndpoints,
+    tokensPerSec: Math.round(tokensPerSec * 10) / 10,
+    requestsRunning,
+    requestsWaiting,
   };
 }
 

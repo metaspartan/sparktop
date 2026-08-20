@@ -168,11 +168,28 @@ const out = process.stdout;
  * so a non-TTY stdout implies --once.
  */
 if (has("--once") || !out.isTTY) {
-  const deadline = Date.now() + 20_000;
-  // Wait for the slow tier so the frame includes containers and disks.
+  const deadline = Date.now() + 30_000;
+  /*
+   * Wait for a frame worth printing, not merely the first one.
+   *
+   * The slow tier supplies disks and containers, and inference endpoints need a
+   * further fast poll after that tier discovers them — so a one-shot render
+   * that stops at the first snapshot reports a machine with no storage, no
+   * containers and no engines. Waiting for disks to appear is the cheapest
+   * signal that the slow tier has landed.
+   */
+  const ready = () => {
+    const nodes = store.snapshot?.nodes.filter((n) => n.status === "online") ?? [];
+    return nodes.length > 0 && nodes.every((n) => n.disks.length > 0);
+  };
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 250));
-    if (store.snapshot?.nodes.some((n) => n.status === "online") && Date.now() > deadline - 17_000) break;
+    if (ready()) {
+      // Two more fast polls: one to scrape endpoints the slow tier just
+      // discovered, and one so their token counters have a delta to rate.
+      await new Promise((r) => setTimeout(r, 2600));
+      break;
+    }
   }
   state.width = out.columns ?? 120;
   state.height = 9999;

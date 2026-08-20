@@ -22,6 +22,7 @@ function node(id: string, status: NodeSnapshot["status"] = "online"): NodeSnapsh
     docker: { available: false, containers: [] },
     network: { interfaces: [] },
     fabric: { ports: [] },
+    inference: [],
   };
 }
 
@@ -33,6 +34,7 @@ const snap = (nodes: NodeSnapshot[], ts: number): ClusterSnapshot => ({
     nodes: nodes.length, nodesOnline: nodes.filter((n) => n.status === "online").length, gpus: 0,
     vramTotalBytes: 0, vramUsedBytes: 0, cpuCores: 0, cpuUsagePct: 0,
     memTotalBytes: 0, memUsedBytes: 0, powerDrawW: 0, maxTempC: null, containers: 0,
+    inferenceEndpoints: 0, tokensPerSec: 0, requestsRunning: 0, requestsWaiting: 0,
   },
 });
 

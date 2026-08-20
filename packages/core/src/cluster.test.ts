@@ -63,6 +63,7 @@ function node(id: string, ports: FabricPort[], over: Partial<NodeSnapshot> = {})
     docker: { available: true, containers: [] },
     network: { interfaces: [] },
     fabric: { ports },
+    inference: [],
     ...over,
   };
 }

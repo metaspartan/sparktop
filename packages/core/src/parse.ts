@@ -648,3 +648,69 @@ export function parseCpuInfo(body: string | undefined): { cores: number; model: 
   const models = [...new Set(l.slice(1).map((s) => s.trim()).filter(Boolean))];
   return { cores: num(l[0]) || 1, model: models.join(" + ") };
 }
+
+// ---------------------------------------------------------------------------
+// Inference endpoints
+// ---------------------------------------------------------------------------
+
+/** Discovery output: `PORT<US>8888<US>metrics` per identified server. */
+export function parseDiscoveredEndpoints(
+  body: string | undefined
+): { port: number; kind: "metrics" | "ollama" | "openai" }[] {
+  const out: { port: number; kind: "metrics" | "ollama" | "openai" }[] = [];
+  const seen = new Set<number>();
+  for (const line of lines(body)) {
+    const f = line.split(US);
+    if (f[0] !== "PORT") continue;
+    const port = num(f[1]);
+    const kind = f[2]?.trim();
+    if (!port || seen.has(port)) continue;
+    if (kind !== "metrics" && kind !== "ollama" && kind !== "openai") continue;
+    seen.add(port);
+    out.push({ port, kind });
+  }
+  return out.sort((a, b) => a.port - b.port);
+}
+
+/**
+ * Split the scrape section into per-endpoint bodies.
+ *
+ * Each block starts with an `EP` header and ends at an `END` marker, so an
+ * endpoint that returned nothing is still represented — the difference between
+ * "no data" and "not reachable" matters to the UI.
+ */
+export function parseInferenceScrapes(
+  body: string | undefined
+): { port: number; kind: string; body: string }[] {
+  const out: { port: number; kind: string; body: string }[] = [];
+  if (!body) return out;
+  const END = `${US}END${US}`;
+  let cur: { port: number; kind: string; body: string } | null = null;
+  const buf: string[] = [];
+
+  const flush = () => {
+    if (cur) {
+      cur.body = buf.join("\n").trim();
+      out.push(cur);
+    }
+    buf.length = 0;
+  };
+
+  for (const raw of body.split("\n")) {
+    const line = raw.replace(/\r$/, "");
+    if (line.startsWith(`EP${US}`)) {
+      flush();
+      const f = line.split(US);
+      cur = { port: num(f[1]), kind: (f[2] ?? "").trim(), body: "" };
+      continue;
+    }
+    if (line.trim() === END.trim() || line.includes(END)) {
+      flush();
+      cur = null;
+      continue;
+    }
+    if (cur) buf.push(line);
+  }
+  flush();
+  return out.filter((e) => e.port > 0);
+}

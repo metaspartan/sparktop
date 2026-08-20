@@ -1,3 +1,4 @@
+import type { EngineId } from "./inference.ts";
 import type { SparkVariantId } from "./variants.ts";
 
 /**
@@ -288,6 +289,41 @@ export interface HostInfo {
   bootTime: number;
 }
 
+/**
+ * An inference server found on a node.
+ *
+ * Cumulative token counters are kept alongside their derived rates so a client
+ * that reconnects can still compute its own deltas, and so the rate can be
+ * shown as unavailable rather than zero on the first sample.
+ */
+export interface InferenceEndpoint {
+  /** `${nodeId}:${port}`. */
+  id: string;
+  nodeId: string;
+  nodeLabel: string;
+  port: number;
+  engine: EngineId;
+  engineLabel: string;
+  /** Models the server reports serving. */
+  models: string[];
+  reachable: boolean;
+
+  requestsRunning: number | null;
+  requestsWaiting: number | null;
+  requestsFinishedTotal: number | null;
+  promptTokensTotal: number | null;
+  generationTokensTotal: number | null;
+  kvCachePct: number | null;
+
+  /** Derived from cumulative counters over measured wall time. */
+  generationTokensPerSec: number | null;
+  promptTokensPerSec: number | null;
+  requestsPerMin: number | null;
+
+  /** Container serving this port, when it could be attributed. */
+  containerName?: string;
+}
+
 export interface NodeSnapshot {
   id: string;
   label: string;
@@ -308,6 +344,7 @@ export interface NodeSnapshot {
   docker: { available: boolean; containers: DockerContainer[] };
   network: { interfaces: NetInterface[] };
   fabric: { ports: FabricPort[] };
+  inference: InferenceEndpoint[];
 }
 
 // ---------------------------------------------------------------------------
@@ -431,6 +468,13 @@ export interface ClusterSnapshot {
     powerDrawW: number;
     maxTempC: number | null;
     containers: number;
+    /** Inference servers detected across the cluster. */
+    inferenceEndpoints: number;
+    /** Combined generation throughput, tokens/sec. */
+    tokensPerSec: number;
+    /** Requests currently generating, across all endpoints. */
+    requestsRunning: number;
+    requestsWaiting: number;
   };
 }
 

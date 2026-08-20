@@ -92,6 +92,9 @@ function header(snap: ClusterSnapshot, st: RenderState, W: number): string[] {
     `${dim("pwr")} ${bold(fmtWatts(t.powerDrawW))}`,
     `${dim("temp")} ${tempTone(t.maxTempC)(fmtTemp(t.maxTempC))}`,
     `${dim("ctr")} ${bold(String(t.containers))}`,
+    ...(t.inferenceEndpoints > 0
+      ? [`${dim("tok/s")} ${bold(C.series3(String(t.tokensPerSec)))}${dim(`  req ${t.requestsRunning}/${t.requestsWaiting}`)}`]
+      : []),
   ];
   return [line1, truncate(cells.join(dim("  ·  ")), W)];
 }
@@ -108,6 +111,28 @@ function overview(snap: ClusterSnapshot, nodes: NodeSnapshot[], st: RenderState,
     out.push(rule("Interconnect", W));
     for (const l of snap.fabric.links) out.push(...linkLine(l, W));
   }
+  const endpoints = snap.nodes.flatMap((n) => n.inference ?? []);
+  if (endpoints.length) {
+    out.push("");
+    out.push(rule("Inference", W));
+    for (const e of endpoints) {
+      if (!e.reachable) {
+        out.push(`  ${C.critical("●")} ${bold(C.ink(`${e.nodeLabel}:${e.port}`))} ${dim("not responding")}`);
+        continue;
+      }
+      const busy = (e.requestsRunning ?? 0) > 0;
+      out.push(
+        `  ${busy ? C.good("●") : dim("●")} ${bold(C.ink(padEnd(`${e.nodeLabel}:${e.port}`, 22)))}` +
+          `${C.series1(padEnd(e.engineLabel, 12))}` +
+          `${padStart(e.generationTokensPerSec === null ? "-" : e.generationTokensPerSec.toFixed(1), 7)} ${dim("tok/s")}  ` +
+          `${dim("run")} ${e.requestsRunning ?? "-"}  ${dim("queue")} ${e.requestsWaiting ?? "-"}  ` +
+          `${dim("served")} ${e.requestsFinishedTotal ?? "-"}` +
+          (e.kvCachePct !== null ? `  ${dim("kv")} ${e.kvCachePct.toFixed(0)}%` : "")
+      );
+      if (e.models.length) out.push(dim(`      ${truncate(e.models.join(", "), W - 8)}`));
+    }
+  }
+
   if (snap.jobs.length) {
     out.push("");
     out.push(rule("Distributed workloads", W));
