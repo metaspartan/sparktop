@@ -10,7 +10,10 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
   ClusterMonitor,
+  HistoryDb,
   HistoryStore,
+  checkImageUpdate,
+  checkSparktopUpdate,
   buildNodeConfig,
   configPath,
   loadConfig,
@@ -58,11 +61,34 @@ if (process.env.SPARKTOP_SLOW_MS) config.slowIntervalMs = Number(process.env.SPA
 const history = new HistoryStore(config.historySize);
 const monitor = new ClusterMonitor(config);
 
+/*
+ * Durable history, alongside the in-memory ring.
+ *
+ * The ring backs the live charts and holds minutes; this holds weeks of run
+ * sessions and downsampled throughput. Disabled with SPARKTOP_DATA=off for
+ * deployments that would rather keep the container stateless.
+ */
+const durable =
+  process.env.SPARKTOP_DATA === "off"
+    ? null
+    : new HistoryDb(undefined, {
+        ...(process.env.SPARKTOP_RETENTION_DAYS
+          ? { retentionDays: Number(process.env.SPARKTOP_RETENTION_DAYS) }
+          : {}),
+        ...(process.env.SPARKTOP_SAMPLE_MS ? { sampleIntervalMs: Number(process.env.SPARKTOP_SAMPLE_MS) } : {}),
+      });
+
 let latest: ClusterSnapshot | null = null;
 
 monitor.on("snapshot", (snap) => {
   latest = snap;
   history.record(snap);
+  try {
+    durable?.record(snap);
+  } catch (e) {
+    // A failing disk must not take the live dashboard down with it.
+    console.error("sparktop: history write failed:", (e as Error).message);
+  }
   broadcast({ type: "snapshot", data: snap });
 });
 
@@ -332,6 +358,37 @@ const server = Bun.serve<SocketData, never>({
         return err("Method not allowed", 405);
       }
 
+      /*
+       * Persisted history: serving sessions and downsampled throughput.
+       */
+      if (pathname === "/api/runs" && req.method === "GET") {
+        if (!durable) return json({ runs: [], summary: null, disabled: true });
+        const limit = Math.min(500, Number(url.searchParams.get("limit") ?? 50) || 50);
+        const sinceDays = Number(url.searchParams.get("days") ?? 7) || 7;
+        return json({
+          runs: durable.runs(limit),
+          summary: durable.summary(Date.now() - sinceDays * 86_400_000),
+          stats: durable.stats(),
+          disabled: false,
+        });
+      }
+
+      if (pathname === "/api/runs/samples" && req.method === "GET") {
+        if (!durable) return json({ samples: [] });
+        const sinceDays = Number(url.searchParams.get("days") ?? 1) || 1;
+        const endpoint = url.searchParams.get("endpoint") ?? undefined;
+        return json({ samples: durable.samples(Date.now() - sinceDays * 86_400_000, endpoint) });
+      }
+
+      /*
+       * Update checks. Read-only: they report that something newer exists and
+       * never act on it.
+       */
+      if (pathname === "/api/updates" && req.method === "GET") {
+        const force = url.searchParams.get("refresh") === "1";
+        return json(await updateState(force));
+      }
+
       const nodeMatch = /^\/api\/nodes\/([^/]+)$/.exec(pathname);
       if (nodeMatch?.[1]) {
         const id = decodeURIComponent(nodeMatch[1]);
@@ -431,7 +488,50 @@ function broadcastConfig(): void {
   });
 }
 
+/*
+ * Update state, cached.
+ *
+ * The GitHub API is rate-limited unauthenticated and a registry query costs a
+ * round trip from every node, so results are held for an hour unless a refresh
+ * is asked for explicitly.
+ */
+let updateCache: { at: number; data: unknown } | null = null;
+
+async function updateState(force: boolean): Promise<unknown> {
+  const HOUR = 3_600_000;
+  if (!force && updateCache && Date.now() - updateCache.at < HOUR) return updateCache.data;
+
+  const sparktop = await checkSparktopUpdate();
+
+  // Image checks touch each node, so only ask about running containers, and
+  // only once per distinct image.
+  const images: unknown[] = [];
+  for (const node of latest?.nodes ?? []) {
+    if (node.status !== "online") continue;
+    const collector = monitor.collector(node.id);
+    if (!collector) continue;
+    const seen = new Set<string>();
+    for (const c of node.docker.containers) {
+      if (c.state !== "running" || seen.has(c.image)) continue;
+      seen.add(c.image);
+      try {
+        images.push(await collector.withClient((cl) => checkImageUpdate(cl, node.id, c.name, c.image)));
+      } catch (e) {
+        images.push({
+          nodeId: node.id, container: c.name, image: c.image,
+          localDigest: null, remoteDigest: null, updateAvailable: false, error: (e as Error).message,
+        });
+      }
+    }
+  }
+
+  const data = { sparktop, images, checkedAt: Date.now() };
+  updateCache = { at: Date.now(), data };
+  return data;
+}
+
 const shutdown = (): void => {
+  durable?.close();
   monitor.stop();
   server.stop(true);
   process.exit(0);

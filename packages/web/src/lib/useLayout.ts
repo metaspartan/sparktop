@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-export type SectionId = "nodes" | "inference" | "fabric" | "jobs" | "charts" | "controls";
+export type SectionId = "nodes" | "inference" | "runs" | "fabric" | "jobs" | "charts" | "controls";
 
 /**
  * Section order. Nodes lead because the machines themselves are what an
@@ -20,6 +20,7 @@ export type SectionId = "nodes" | "inference" | "fabric" | "jobs" | "charts" | "
 export const SECTIONS: { id: SectionId; label: string; description: string }[] = [
   { id: "nodes", label: "Spark nodes", description: "Per-node GPU, memory, processes and containers" },
   { id: "inference", label: "Inference", description: "Detected engines, tokens/sec, requests in flight" },
+  { id: "runs", label: "Run history", description: "Past serving sessions, tokens and requests" },
   { id: "fabric", label: "Interconnect", description: "Topology, per-link throughput and health" },
   { id: "jobs", label: "Distributed workloads", description: "Jobs spanning more than one node" },
   { id: "charts", label: "Comparison charts", description: "Cross-node trends over time" },
@@ -27,8 +28,8 @@ export const SECTIONS: { id: SectionId; label: string; description: string }[] =
 ];
 
 const DEFAULT_ORDER: SectionId[] = SECTIONS.map((s) => s.id);
-// v4: the section set changed again, so older layouts are not carried over.
-const KEY = "sparktop-layout-v4";
+// v5: the section set changed again, so older layouts are not carried over.
+const KEY = "sparktop-layout-v5";
 
 export type Density = "comfortable" | "compact";
 

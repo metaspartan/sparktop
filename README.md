@@ -217,6 +217,49 @@ one logical server is reachable twice (behind a proxy, or on two ports) the
 duplicate is folded out of cluster totals, so a tensor-parallel job — where only
 rank 0 serves an API — is not double counted.
 
+## Run history
+
+Live metrics are held in memory for a few minutes, which answers "what is
+happening" and nothing about last week. sparktop also keeps durable history in
+SQLite (Bun's built-in driver — no external database):
+
+- **Runs.** A serving session: one endpoint, one model, continuously present.
+  Individual requests are not observable — engines expose counters, not a
+  request log — so what is recorded is what counter deltas support honestly:
+  when it started, how long it served, tokens generated, requests completed and
+  peak throughput. A gap longer than five minutes ends a run rather than
+  pretending it continued.
+- **Samples.** Throughput and queue depth, written once a minute rather than
+  once a second, because 1Hz for a month is tens of millions of rows.
+
+Both are pruned to a retention window, so the file reaches a steady size and
+stays there. Pruning is relative to the data's own clock, not the wall clock —
+a host with a skewed clock would otherwise delete history that is perfectly
+current by its own timeline.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SPARKTOP_DATA` | `./data/sparktop.db` | Database path, or `off` to keep the server stateless |
+| `SPARKTOP_RETENTION_DAYS` | `30` | How long to keep runs and samples |
+| `SPARKTOP_SAMPLE_MS` | `60000` | Sampling interval for stored throughput |
+
+## Updates
+
+sparktop checks for two kinds of update, both strictly read-only — it reports
+that something newer exists and never pulls, restarts or writes anything:
+
+- **sparktop itself**, by comparing the running commit against the repository
+  tip, with a count of how far behind.
+- **Container images**, by comparing each running container's image digest
+  against what the registry currently serves. Uses `docker manifest inspect`,
+  which queries the registry without downloading layers. An image pinned by
+  digest is reported as such, since a pinned reference is immutable by
+  definition.
+
+Results are cached for an hour (the unauthenticated GitHub API is rate-limited,
+and a registry query costs a round trip from every node). Both appear under
+Settings → Updates.
+
 ## Controls
 
 Container lifecycle and image swapping, **disabled by default**:

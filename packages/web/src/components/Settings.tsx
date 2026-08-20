@@ -5,6 +5,7 @@
 import { useEffect, useRef } from "react";
 import type { ClusterSnapshot, PublicNodeConfig } from "@sparktop/core";
 import { SECTIONS, type useLayout } from "../lib/useLayout";
+import { UpdatePanel } from "./RunsView";
 import type { ThemeChoice } from "../lib/theme";
 
 interface Props {
@@ -162,6 +163,10 @@ export function Settings({ open, onClose, layout, theme, onTheme, snap, nodes, i
               Nodes are managed through the API or <code className="rounded bg-surface-2 px-1">config/nodes.json</code>;
               changes apply without restarting.
             </p>
+          </Group>
+
+          <Group title="Updates" note="Checked hourly. Read-only: sparktop never pulls or restarts anything on its own.">
+            <UpdatePanel />
           </Group>
 
           <Group title="About">

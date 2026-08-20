@@ -11,6 +11,7 @@ import { Setup } from "./components/Setup";
 import { FabricView } from "./components/FabricView";
 import { InferenceView } from "./components/InferenceView";
 import { ControlsView } from "./components/ControlsView";
+import { RunsView } from "./components/RunsView";
 import { NodeCard } from "./components/NodeCard";
 import { TimeChart, type ChartSeries } from "./components/TimeChart";
 
@@ -33,6 +34,7 @@ export default function App() {
       </div>
     ),
     inference: snapshot && <InferenceView nodes={snapshot.nodes} history={history} themeKey={resolved} />,
+    runs: snapshot && <RunsView />,
     fabric: snapshot && <FabricView snap={snapshot} history={history} themeKey={resolved} />,
     jobs: snapshot && <Jobs jobs={snapshot.jobs} />,
     charts: snapshot && <ClusterCharts snap={snapshot} history={history} themeKey={resolved} />,
