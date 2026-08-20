@@ -59,10 +59,14 @@ export function InferenceView({ nodes, history, themeKey }: Props) {
       >
         <div className="grid grid-cols-2 gap-4 border-b border-edge p-4 sm:grid-cols-4">
           <Stat label="Decode" value={`${Math.round(totalTokens * 10) / 10}`} sub="output tokens/sec" />
+          {/* The headline prefill figure is the computed one. Counting cache
+              hits reports tokens the model never processed, which on a long
+              agentic conversation is most of them — see the endpoint row for
+              the raw ingest rate beside the hit rate that explains it. */}
           <Stat
             label="Prefill"
-            value={`${Math.round(endpoints.reduce((a, e) => a + (e.prefillTokensPerSec ?? 0), 0) * 10) / 10}`}
-            sub="prompt tokens/sec"
+            value={`${Math.round(endpoints.reduce((a, e) => a + (e.prefillComputedTokensPerSec ?? e.prefillTokensPerSec ?? 0), 0) * 10) / 10}`}
+            sub="computed tokens/sec"
           />
           <Stat label="In flight" value={String(running)} sub="requests" />
           <Stat label="Queued" value={String(waiting)} sub="waiting" />
@@ -199,8 +203,22 @@ function EndpointRow({ e }: { e: InferenceEndpoint }) {
           </span>
         )}
         {e.prefillTokensPerSec !== null && (
-          <span className="tnum">
-            prefill <span className="font-medium text-ink">{num(e.prefillTokensPerSec)}</span> tok/s
+          <span
+            className="tnum cursor-help"
+            title={
+              e.prefillComputedTokensPerSec !== null
+                ? `${num(e.prefillTokensPerSec)} tok/s of prompt were ingested, but the prefix cache already held most of them — ${num(e.prefillComputedTokensPerSec)} tok/s actually went through the model.`
+                : "Prompt tokens ingested per second, cache hits included."
+            }
+          >
+            prefill{" "}
+            <span className="font-medium text-ink">
+              {num(e.prefillComputedTokensPerSec ?? e.prefillTokensPerSec)}
+            </span>{" "}
+            tok/s
+            {e.prefillComputedTokensPerSec !== null && e.prefillTokensPerSec > 0 && (
+              <span className="text-ink-muted"> of {num(e.prefillTokensPerSec)} ingested</span>
+            )}
           </span>
         )}
       </div>

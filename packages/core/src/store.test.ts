@@ -43,6 +43,7 @@ function endpoint(over: Partial<InferenceEndpoint> = {}): InferenceEndpoint {
     ttftMs: null,
     interTokenLatencyMs: null,
     perRequestDecodeTokensPerSec: null,
+    prefillComputedTokensPerSec: null,
     latencyBasis: null,
     e2eLatencyMs: null,
     queueLatencyMs: null,

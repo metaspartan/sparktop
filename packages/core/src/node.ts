@@ -684,6 +684,17 @@ export class NodeCollector extends EventEmitter {
       const finishedRate = rate(base?.finished, finished, base?.t) ?? rate(prev?.finished.value, finished, prev?.finished.t);
 
       /*
+       * Prompt tokens the model actually processed: what it was handed, less
+       * what the prefix cache already held. Both counters are monotonic, so the
+       * difference is too, and it can go through the same windowed rate.
+       */
+      const cachedNow = reading.cachedPromptTokensTotal;
+      const computed = prompt !== undefined && cachedNow !== undefined ? prompt - cachedNow : undefined;
+      const computedBase =
+        base?.prompt !== undefined && base?.cached !== undefined ? base.prompt - base.cached : undefined;
+      const computedRate = rate(computedBase, computed, base?.t);
+
+      /*
        * Latency over a rolling window, falling back to the lifetime mean.
        *
        * The window is compared against its oldest retained scrape, so the
@@ -760,6 +771,7 @@ export class NodeCollector extends EventEmitter {
         prefillTokensPerSec: promptRate,
         generationTokensPerSec: genRate,
         promptTokensPerSec: promptRate,
+        prefillComputedTokensPerSec: computedRate,
         requestsPerMin: finishedRate === null ? null : Math.round(finishedRate * 600) / 10,
         cachedPromptTokensTotal: reading.cachedPromptTokensTotal ?? null,
         // Acceptance rate is what governs the speed-up; mean acceptance length
@@ -1119,6 +1131,7 @@ function emptyEndpoint(nodeId: string, nodeLabel: string, port: number): Inferen
     prefillTokensPerSec: null,
     generationTokensPerSec: null,
     promptTokensPerSec: null,
+    prefillComputedTokensPerSec: null,
     requestsPerMin: null,
     cachedPromptTokensTotal: null,
     promptCacheHitPct: null,

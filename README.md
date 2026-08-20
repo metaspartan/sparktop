@@ -302,7 +302,7 @@ Reported per endpoint:
 | Metric | Meaning |
 |---|---|
 | **Decode** tok/s | Output tokens the server produces, aggregate |
-| **Prefill** tok/s | Prompt tokens ingested, including cache hits |
+| **Prefill** tok/s | Prompt tokens that went through the model, with the raw ingest rate beside it |
 | **TTFT** | Time to first token |
 | **Per-token** | Inter-token latency, and the decode speed one request sees |
 | **Queue** | Time waiting before work began |
@@ -329,10 +329,15 @@ When nothing completed even in that window, the lifetime average is shown but
 **labelled and dimmed as such**, because a stale mean sitting beside a decode
 rate of zero would otherwise read as a live measurement.
 
-Two figures are easy to misread. **Prefill tok/s counts cached tokens**: a high
-prefix-hit rate (95%+ is common with a shared system prompt) means far less work
-was done than the number suggests — which is why the hit rate is shown next to
-it. And **aggregate decode is not per-request speed**: a server producing
+**Prefill is reported as computed tokens, not ingested ones.** The engine's own
+`prompt_tokens_total` counts every token it was handed, cache hits included, so
+on a long agentic conversation it reads enormous: a 157K-token prompt that is
+97% resident in the prefix cache still adds 157K to the counter and can show as
+50,000 tok/s while the model processed a fortieth of that. sparktop subtracts
+the cache hits and leads with the remainder, keeping the raw ingest rate beside
+it so the engine's own figure is still there to compare.
+
+**Aggregate decode is not per-request speed** either: a server producing
 60 tok/s across four concurrent requests gives each of them about 15, which is
 what a user actually experiences. Both are shown.
 

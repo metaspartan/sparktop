@@ -345,6 +345,22 @@ export interface InferenceEndpoint {
   generationTokensPerSec: number | null;
   /** @deprecated Use prefillTokensPerSec. */
   promptTokensPerSec: number | null;
+
+  /**
+   * Prompt tokens that actually went through the model, per second.
+   *
+   * `prefillTokensPerSec` counts every prompt token the engine was handed,
+   * which is the figure vLLM reports for itself and therefore the one to agree
+   * with. It is not, however, a measure of work: with a shared system prompt or
+   * a long agentic conversation the prefix cache commonly serves 95%+ of those
+   * tokens, so the rate can read tens of thousands while the model computed a
+   * small fraction of it. This is that fraction — prompt tokens minus cache
+   * hits — and it is the number to read as prefill throughput.
+   *
+   * Null when the engine does not report cache hits, since the difference
+   * cannot be known.
+   */
+  prefillComputedTokensPerSec: number | null;
   requestsPerMin: number | null;
 
   /** Prompt tokens served from the prefix cache rather than recomputed. */
