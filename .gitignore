@@ -21,3 +21,6 @@ sparktop_key*
 .vite/
 coverage/
 *.tsbuildinfo
+
+# Staging folder for variant chassis captures (scripts/save-variants.ps1)
+.variant-staging/

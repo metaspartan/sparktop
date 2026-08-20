@@ -11,9 +11,17 @@ the chassis, and written as WebP into packages/web/public/variants/. The web UI
 picks those up automatically and falls back to its drawn vector icons for any
 that are missing.
 
-Usage:
-    python scripts/split-variants.py <composite-image> [--out DIR] [--rows 4]
-    python scripts/split-variants.py lineup.png --debug     # also dump raw tiles
+Two ways in, depending on what you have:
+
+    # One composite grid image
+    python scripts/split-variants.py lineup.png
+
+    # A folder of already-separated images, each filename containing its
+    # variant id (asus.png, dell.jpg, spark-nvidia-front.webp, ...)
+    python scripts/split-variants.py --singles ./.variant-staging
+
+On Windows, scripts/save-variants.ps1 captures the eight images straight from
+the clipboard into a staging folder for the second form.
 
 Requires Pillow:  pip install pillow
 """
@@ -125,9 +133,63 @@ def trim(img: Image.Image, pad: int = 2) -> Image.Image:
     )
 
 
+ALL_IDS = LEFT_COLUMN + RIGHT_COLUMN
+
+
+def process_one(img: Image.Image, name: str, out_dir: Path, width: int, tolerance: int) -> None:
+    """Knock out the background, trim, downscale and write a variant icon."""
+    cut = trim(knock_out_background(img, tolerance))
+    if cut.width > width:
+        ratio = width / cut.width
+        cut = cut.resize((width, max(1, round(cut.height * ratio))), Image.LANCZOS)
+    dest = out_dir / f"{name}.webp"
+    cut.save(dest, "WEBP", quality=90, method=6)
+    print(f"  {name:9s} {cut.width}x{cut.height}  ->  {dest}")
+
+
+def run_singles(src_dir: Path, out_dir: Path, width: int, tolerance: int) -> int:
+    """
+    Process one already-separated image per variant.
+
+    Files are matched by variant id anywhere in the filename, so
+    `asus.png`, `2-asus.jpg` and `spark-asus-front.webp` all work.
+    """
+    candidates = [p for p in sorted(src_dir.iterdir()) if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}]
+    if not candidates:
+        print(f"No images found in {src_dir}")
+        return 1
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    written = 0
+    unmatched: list[Path] = []
+    for path in candidates:
+        stem = path.stem.lower()
+        name = next((v for v in ALL_IDS if v in stem), None)
+        if not name:
+            unmatched.append(path)
+            continue
+        process_one(Image.open(path).convert("RGBA"), name, out_dir, width, tolerance)
+        written += 1
+
+    if unmatched:
+        print("\nSkipped (filename does not contain a variant id):")
+        for p in unmatched:
+            print(f"  {p.name}")
+        print(f"  Expected one of: {', '.join(ALL_IDS)}")
+
+    print(f"\nWrote {written} variant images to {out_dir}")
+    print("Rebuild the web UI to pick them up:  bun run build:web")
+    return 0 if written else 1
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("source", type=Path, help="Composite line-up image")
+    ap.add_argument("source", type=Path, nargs="?", help="Composite line-up image")
+    ap.add_argument(
+        "--singles",
+        type=Path,
+        help="Directory of already-separated per-variant images, named after the variant id",
+    )
     ap.add_argument(
         "--out",
         type=Path,
@@ -140,8 +202,17 @@ def main() -> int:
     ap.add_argument("--debug", action="store_true", help="Also write untouched tiles for inspection")
     args = ap.parse_args()
 
+    if args.singles:
+        if not args.singles.is_dir():
+            print(f"No such directory: {args.singles}")
+            return 1
+        return run_singles(args.singles, args.out, args.width, args.tolerance)
+
+    if not args.source:
+        ap.error("give a composite image, or --singles DIR for per-variant images")
     if not args.source.exists():
-        return f"No such file: {args.source}"  # type: ignore[return-value]
+        print(f"No such file: {args.source}")
+        return 1
 
     src = Image.open(args.source).convert("RGBA")
     cols = 2
