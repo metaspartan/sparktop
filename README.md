@@ -5,10 +5,9 @@
 **Realtime TUI and web dashboard for multi-node NVIDIA DGX Spark clusters.**
 
 One place to watch every Spark you own — the GPUs, the containers, the models
-they are serving, and the ConnectX-7 fabric between them that ordinary network
-tools report as nearly idle.
+they are serving, and the RDMA fabric between them.
 
-[Quick start](#quick-start) · [Why RDMA counters](#why-the-usual-network-stats-lie) · [TUI](#terminal-ui) · [API](#http-api) · [Configuration](#configuration)
+[Quick start](#quick-start) · [Interconnect](#interconnect) · [TUI](#terminal-ui) · [API](#http-api) · [Configuration](#configuration)
 
 [![CI](https://github.com/metaspartan/sparktop/actions/workflows/ci.yml/badge.svg)](https://github.com/metaspartan/sparktop/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -143,38 +142,30 @@ Non-Spark NVIDIA hosts work too — you simply get no fabric section for them.
 - **What each model is actually doing** — decode and prefill throughput, time to first token, queue depth and KV cache pressure, read from whichever engine is serving.
 - **Everything you would expect**: GPU utilisation, unified memory, per-core CPU, every thermal sensor, disks, Docker containers, and network interfaces.
 
-## Why the usual network stats lie
+## Interconnect
 
-This is the reason `sparktop` exists.
+NCCL moves data between Sparks over RoCE, which bypasses the kernel network
+stack — so `/proc/net/dev` and the tools built on it see almost none of it. On a
+live pair mid-job, `enp1s0f1np1` showed 5.6 MB there against 325 GB actually
+moved. `sparktop` reads the NIC's RDMA vport counters via `ethtool -S`, falling
+back to the InfiniBand port counters in `/sys/class/infiniband` (counted in
+4-octet words, not bytes).
 
-NCCL moves data between Sparks over **RoCE**, which bypasses the kernel network stack entirely. `/proc/net/dev`, `ifconfig`, `ip -s link`, and every dashboard built on them therefore report almost nothing on the interconnect. Measured on a live pair mid-job:
+Nothing on a Spark reports which machine is at the other end of a cable.
+`sparktop` pairs ports by IPv4 subnet — two ports on one subnet, on two
+different nodes — then corroborates against traffic, since on a real link one
+end's transmit counter tracks the other end's receive. Confirmed pairs are
+marked as such; a pair that shares a subnet but whose counters disagree is
+flagged rather than trusted. Where three or more ports share a subnet there is a
+switch in the middle and per-peer traffic cannot be attributed from NIC
+counters, which `sparktop` reports instead of inventing links.
 
-| Source | Bytes reported on `enp1s0f1np1` |
-|---|---|
-| `/proc/net/dev` (what most tools read) | **5.6 MB** |
-| `rx_vport_rdma_unicast_bytes` (what actually moved) | **325 GB** |
-
-Four orders of magnitude. `sparktop` reads the NIC's RDMA vport counters via `ethtool -S`, falling back to the InfiniBand port counters in `/sys/class/infiniband` (which count 4-octet words, not bytes — a detail that silently produces a 4× error if missed).
-
-### Verified topology
-
-Nothing on a Spark reports "this cable reaches that machine". `sparktop` infers pairing from IPv4 addressing — two ports on one subnet, on two different nodes — and then **proves** it against traffic: on a real link, A's transmit counter and B's receive counter move together. Links that corroborate are marked `verified`. A pairing that shares a subnet but whose counters disagree is flagged instead of quietly trusted.
-
-Where three or more ports share a subnet there is a switch in the middle, and per-peer traffic genuinely cannot be attributed from NIC counters. `sparktop` says so rather than inventing links.
-
-### One cable is already the whole link
-
-DGX Spark networking is easy to misread, and `sparktop` reports it the way the
-hardware actually behaves:
-
-- **A single QSFP cable gives you the full 200GbE link.** Adding a second cable
-  does not add bandwidth. ([NVIDIA: Connect Two Sparks](https://build.nvidia.com/spark/connect-two-sparks))
-- That one cable **presents as two RDMA interfaces** of roughly 100 Gb/s each,
-  because each port sits behind its own PCIe Gen5 x4 link. Reaching the full
-  200 Gb/s means using both — `NCCL_IB_MERGE_NICS=1` — not buying more cable.
-- So a two-Spark pair shows a **capacity of ~201.6 Gb/s across two links**, not
-  400G. Advertised link speed is a signalling rate; `sparktop` shows the rate the
-  PCIe attachment can actually sustain.
+Reported capacity is what the hardware sustains rather than its signalling rate.
+Each GB10 port sits behind its own PCIe Gen5 x4 attachment, so a two-Spark pair
+comes to about 201.6 Gb/s across two links. A single QSFP cable already carries
+the full link; reaching its rated speed is a matter of using both interfaces
+(`NCCL_IB_MERGE_NICS=1`) rather than adding
+cable. ([NVIDIA: Connect Two Sparks](https://build.nvidia.com/spark/connect-two-sparks))
 
 ## Hardware variants
 

@@ -76,6 +76,7 @@ export function InferenceView({ nodes, history, themeKey }: Props) {
       </Card>
 
       <Card
+        fill
         title="Token throughput"
         right={
           series.length > 1 ? (
@@ -91,7 +92,8 @@ export function InferenceView({ nodes, history, themeKey }: Props) {
           <TimeChart
             ts={ts}
             series={series}
-            height={172}
+            grow
+            minHeight={172}
             format={(v) => `${v.toFixed(1)} tok/s`}
             tickFormat={(v) => v.toFixed(0)}
             minRange={10}
@@ -99,7 +101,7 @@ export function InferenceView({ nodes, history, themeKey }: Props) {
             themeKey={themeKey}
           />
         ) : (
-          <div className="flex h-[172px] items-center justify-center text-[11px] text-ink-muted">
+          <div className="flex h-full min-h-[172px] items-center justify-center text-[11px] text-ink-muted">
             Collecting…
           </div>
         )}

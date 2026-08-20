@@ -24,6 +24,18 @@ interface Props {
   ts: number[];
   series: ChartSeries[];
   height?: number;
+  /**
+   * Take the height of the container rather than a fixed number of pixels.
+   *
+   * Chart cards sit in a grid beside cards whose height is set by their
+   * content, and a grid row stretches every card to match the tallest. A fixed
+   * height then leaves the plot floating in dead space. In this mode the host
+   * fills the card and the plot is sized from the measured box, so the chart
+   * ends where the card ends whatever the neighbour does.
+   */
+  grow?: boolean;
+  /** Floor for `grow`, so a short row still yields a readable plot. */
+  minHeight?: number;
   /** Full-precision formatter, used in the tooltip. */
   format: (v: number) => string;
   /** Short formatter for axis ticks. Falls back to `format`. */
@@ -46,6 +58,8 @@ export function TimeChart({
   ts,
   series,
   height = 120,
+  grow = false,
+  minHeight = 140,
   format,
   tickFormat,
   minRange = 1,
@@ -73,9 +87,12 @@ export function TimeChart({
     const muted = cssVar("--text-muted");
     const ticks = tickFormat ?? format;
 
+    /** Height the plot should occupy right now, measured when growing. */
+    const measure = () => (grow ? Math.max(minHeight, host.clientHeight || minHeight) : height);
+
     const opts: uPlot.Options = {
       width: Math.max(80, host.clientWidth || 300),
-      height,
+      height: measure(),
       legend: { show: false },
       padding: [8, 10, 0, 0],
       cursor: { x: true, y: false, points: { size: 7 }, drag: { x: false, y: false } },
@@ -186,7 +203,7 @@ export function TimeChart({
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
         const w = host.clientWidth;
-        if (w > 0) u.setSize({ width: w, height });
+        if (w > 0) u.setSize({ width: w, height: measure() });
       });
     });
     ro.observe(host);
@@ -197,7 +214,7 @@ export function TimeChart({
       u.destroy();
       plotRef.current = null;
     };
-  }, [height, minRange, fill, themeKey, series.map((s) => s.label).join("|")]);
+  }, [height, grow, minHeight, minRange, fill, themeKey, series.map((s) => s.label).join("|")]);
 
   /*
    * Feed data without rebuilding the plot.
@@ -228,7 +245,11 @@ export function TimeChart({
       // min-width:0 and overflow:hidden are load-bearing: without them a grid
       // child sizes to its content, an oversized canvas widens the host, and
       // the chart can never shrink back on a narrow viewport.
-      style={{ height, width: "100%", minWidth: 0, overflow: "hidden" }}
+      style={
+        grow
+          ? { height: "100%", minHeight, width: "100%", minWidth: 0, overflow: "hidden" }
+          : { height, width: "100%", minWidth: 0, overflow: "hidden" }
+      }
     />
   );
 }

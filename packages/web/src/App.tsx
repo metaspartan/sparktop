@@ -225,9 +225,14 @@ function SummaryStrip({ snap }: { snap: ClusterSnapshot }) {
             <span className="text-[10px] uppercase tracking-wide text-ink-muted">{i.label}</span>
             <span className="tnum text-[14px] font-semibold leading-none text-ink">{i.value}</span>
           </div>
+          {/* The label reads; the meter decorates. Give the text the room it
+              needs first and let the bar take what is left, rather than
+              splitting the cell evenly and eliding both. */}
           <div className="mt-0.5 flex items-center gap-2">
-            <span className="truncate text-[10px] text-ink-muted">{i.sub}</span>
-            {i.pct !== undefined && <Meter value={i.pct} tone={i.tone ?? "accent"} className="w-14" />}
+            <span className="flex-none text-[10px] text-ink-muted">{i.sub}</span>
+            {i.pct !== undefined && (
+              <Meter value={i.pct} tone={i.tone ?? "accent"} className="min-w-0 flex-1" />
+            )}
           </div>
         </div>
       ))}

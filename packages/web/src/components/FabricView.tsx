@@ -37,6 +37,7 @@ export function FabricView({ snap, history, themeKey }: Props) {
       </Card>
 
       <Card
+        fill
         title="Link throughput"
         right={
           links.length > 1 ? (
@@ -310,20 +311,23 @@ function LinkChart({
 
   if (!links.length) {
     return (
-      <p className="py-10 text-center text-sm text-ink-muted">
+      <p className="flex h-full min-h-[168px] items-center justify-center text-center text-sm text-ink-muted">
         No links detected. sparktop pairs ports that share a subnet across two nodes.
       </p>
     );
   }
   if (!ts.length) {
-    return <p className="py-10 text-center text-sm text-ink-muted">Collecting…</p>;
+    return (
+      <p className="flex h-full min-h-[168px] items-center justify-center text-sm text-ink-muted">Collecting…</p>
+    );
   }
 
   return (
     <TimeChart
       ts={ts}
       series={series}
-      height={168}
+      grow
+      minHeight={168}
       minRange={0.5}
       fill={series.length === 1}
       format={(v) => fmtGbps(v)}

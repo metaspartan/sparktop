@@ -12,17 +12,26 @@ export function Card({
   children,
   className = "",
   bodyClass = "",
+  fill = false,
 }: {
   title?: ReactNode;
   right?: ReactNode;
   children: ReactNode;
   className?: string;
   bodyClass?: string;
+  /**
+   * Let the body take whatever height the card is given.
+   *
+   * A grid row stretches every card to the tallest one. Without this the body
+   * keeps its content height and the surplus shows as blank space under it,
+   * which is what a chart card does when its neighbour is a long list.
+   */
+  fill?: boolean;
 }) {
   const dense = useDensity() === "compact";
   return (
     <section
-      className={`min-w-0 rounded-xl border border-edge bg-surface-1 shadow-[0_1px_2px_rgb(0_0_0/0.04)] ${className}`}
+      className={`flex min-w-0 flex-col rounded-xl border border-edge bg-surface-1 shadow-[0_1px_2px_rgb(0_0_0/0.04)] ${className}`}
     >
       {(title || right) && (
         <header
@@ -34,7 +43,9 @@ export function Card({
           {right}
         </header>
       )}
-      <div className={bodyClass || (dense ? "p-3" : "p-4")}>{children}</div>
+      {/* min-h-0 lets the body shrink below its content box, without which a
+          flex child refuses to give the overflow back to the chart. */}
+      <div className={`${fill ? "min-h-0 flex-1" : ""} ${bodyClass || (dense ? "p-3" : "p-4")}`}>{children}</div>
     </section>
   );
 }
@@ -65,9 +76,19 @@ export function Meter({
     "series-2": "var(--series-2)",
     "series-3": "var(--series-3)",
   }[tone];
+  /*
+   * `w-full` is the default, not a fixed part of the base.
+   *
+   * Two width utilities on one element have equal specificity, so a caller's
+   * `w-14` does not reliably beat a baked-in `w-full` — whichever Tailwind
+   * happens to emit later wins. Every call site that tried to size a meter was
+   * silently getting full width instead, which is what squeezed the header's
+   * sub-labels down to an ellipsis.
+   */
+  const sized = /(^|\s)(w-|min-w-|max-w-|flex-1|basis-)/.test(className);
   return (
     <div
-      className={`h-1.5 w-full overflow-hidden rounded-full bg-surface-2 ${className}`}
+      className={`h-1.5 ${sized ? "" : "w-full"} overflow-hidden rounded-full bg-surface-2 ${className}`}
       role="meter"
       aria-valuenow={Math.round(pct)}
       aria-valuemin={0}
