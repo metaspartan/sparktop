@@ -9,6 +9,8 @@
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
+  PROMETHEUS_CONTENT_TYPE,
+  renderPrometheus,
   ClusterMonitor,
   HistoryDb,
   HistoryStore,
@@ -52,6 +54,9 @@ const VERSION: string = await (async () => {
     return "unknown";
   }
 })();
+
+/** Last rendered scrape body, keyed by the snapshot it came from. */
+let metricsCache: { ts: number; body: string } = { ts: -1, body: "" };
 
 const cfgPath = configPath();
 const config: AppConfig = await loadConfig(cfgPath);
@@ -245,6 +250,26 @@ const server = Bun.serve<SocketData, never>({
       if (!authorized(req)) return err("Unauthorized", 401);
       if (srv.upgrade(req, { data: { id: nextSocketId++ } })) return undefined as unknown as Response;
       return err("WebSocket upgrade failed", 400);
+    }
+
+    /*
+     * Prometheus scrape.
+     *
+     * Rendered from the snapshot the collector already produced, so a scrape
+     * costs one string build and never an SSH round trip. The result is cached
+     * against the snapshot's timestamp: several Prometheus servers, or one
+     * scraping faster than the poll interval, then share a single render
+     * instead of repeating it per request.
+     */
+    if (pathname === "/metrics" && req.method === "GET") {
+      if (!authorized(req)) return err("Unauthorized", 401);
+      const snap = latest ?? monitor.snapshot;
+      if (metricsCache.ts !== snap.ts) {
+        metricsCache = { ts: snap.ts, body: renderPrometheus(snap) };
+      }
+      return new Response(metricsCache.body, {
+        headers: { "content-type": PROMETHEUS_CONTENT_TYPE, "cache-control": "no-store" },
+      });
     }
 
     if (pathname.startsWith("/api/")) {

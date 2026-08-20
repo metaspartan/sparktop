@@ -117,6 +117,109 @@ export function sparkline(values: number[], width: number, max?: number): string
   return out.padStart(width, " ");
 }
 
+/*
+ * Braille line chart.
+ *
+ * A braille cell carries a 2x4 dot matrix, so one row of characters holds four
+ * vertical levels and one column holds two samples — eight times the resolution
+ * of a block sparkline in the same space, which is what makes a trend legible
+ * rather than merely present.
+ *
+ * Dot numbering is the Unicode one, which is not raster order:
+ *     1 4        0x01 0x08
+ *     2 5   ->   0x02 0x10
+ *     3 6        0x04 0x20
+ *     7 8        0x40 0x80
+ */
+const DOTS_LEFT = [0x01, 0x02, 0x04, 0x40];
+const DOTS_RIGHT = [0x08, 0x10, 0x20, 0x80];
+
+export interface ChartOpts {
+  /** Upper bound. Omitted means scale to the data. */
+  max?: number;
+  /** Force the axis to span at least this much, so a flat line is not noise. */
+  minRange?: number;
+  color?: (s: string) => string;
+  /** Draw the axis gutter with these labels. */
+  format?: (v: number) => string;
+}
+
+/**
+ * Render `values` as `height` rows of braille, `width` columns wide.
+ *
+ * Consecutive samples are joined vertically rather than plotted as isolated
+ * dots: a line that jumps between distant values would otherwise appear as two
+ * unrelated specks with nothing between them.
+ */
+export function chart(values: number[], width: number, height: number, opts: ChartOpts = {}): string[] {
+  const color = opts.color ?? C.series1;
+  const slicePeek = values.slice(-width * 2);
+  const hi = Math.max(opts.max ?? 0, ...slicePeek, opts.minRange ?? 0, 0.0001);
+  const lo = 0;
+
+  /*
+   * The gutter is sized from the labels it must hold, not fixed. A constant
+   * width silently overflows on anything long ("100 Mbps" is eight characters)
+   * and shifts the plot right by the difference, which misaligns charts sitting
+   * side by side.
+   */
+  const gutter = opts.format ? Math.min(10, Math.max(opts.format(hi).length, opts.format(lo).length) + 1) : 0;
+  /*
+   * Never wider than asked for. Clamping this up to a minimum would overflow
+   * the caller's column and push whatever sits beside it out of alignment, so
+   * a space too small to plot in gets nothing at all.
+   */
+  const plotW = width - gutter;
+  if (height < 1 || plotW < 4) return [];
+
+  const cols = plotW * 2;
+  const rows = height * 4;
+  const slice = values.slice(-cols);
+  const span = Math.max(hi - lo, 0.0001);
+
+  // grid[row][col] of set dots, packed per braille cell below.
+  const cells: number[][] = Array.from({ length: height }, () => new Array<number>(plotW).fill(0));
+  const yOf = (v: number): number => {
+    const norm = (Math.max(lo, Math.min(hi, v)) - lo) / span;
+    // Row 0 is the top, so a high value maps to a low index.
+    return Math.max(0, Math.min(rows - 1, Math.round((1 - norm) * (rows - 1))));
+  };
+
+  // Right-align: the newest sample sits at the right edge, as it does on a
+  // scrolling chart, so the eye reads left-to-right into the present.
+  const offset = cols - slice.length;
+  let prevY: number | null = null;
+  for (let i = 0; i < slice.length; i++) {
+    const x = offset + i;
+    if (x < 0) continue;
+    const y = yOf(slice[i]!);
+    const from = prevY === null ? y : prevY;
+    const [a, b] = from <= y ? [from, y] : [y, from];
+    for (let yy = a; yy <= b; yy++) {
+      const cellRow = Math.floor(yy / 4);
+      const cellCol = Math.floor(x / 2);
+      if (cellRow < 0 || cellRow >= height || cellCol < 0 || cellCol >= plotW) continue;
+      const bit = x % 2 === 0 ? DOTS_LEFT[yy % 4]! : DOTS_RIGHT[yy % 4]!;
+      cells[cellRow]![cellCol]! |= bit;
+    }
+    prevY = y;
+  }
+
+  const out: string[] = [];
+  for (let r = 0; r < height; r++) {
+    const body = cells[r]!.map((m) => (m === 0 ? " " : String.fromCharCode(0x2800 + m))).join("");
+    if (!opts.format) {
+      out.push(color(body));
+      continue;
+    }
+    // Label only the top and bottom of the axis: intermediate ticks cost rows
+    // that the plot itself needs.
+    const label = r === 0 ? opts.format(hi) : r === height - 1 ? opts.format(lo) : "";
+    out.push(dim(padStart(label, Math.max(0, gutter - 1))) + " " + color(body));
+  }
+  return out;
+}
+
 export const screen = {
   altOn: "\x1b[?1049h",
   altOff: "\x1b[?1049l",

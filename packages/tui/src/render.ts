@@ -17,7 +17,7 @@ import {
   pctOf,
   shortImage,
 } from "@sparktop/core";
-import { BOX, C, bar, bold, dim, padEnd, padStart, rule, sparkline, tempTone, toneFor, truncate } from "./ansi.ts";
+import { BOX, C, bar, bold, chart, dim, padEnd, padStart, rule, sparkline, tempTone, toneFor, truncate } from "./ansi.ts";
 
 export type View = "overview" | "fabric" | "processes" | "containers";
 
@@ -101,8 +101,54 @@ function header(snap: ClusterSnapshot, st: RenderState, W: number): string[] {
 
 const visible = (s: string): number => s.replace(/\x1b\[[0-9;]*m/g, "").length;
 
+/**
+ * Side-by-side trend charts.
+ *
+ * Three narrow charts read better than one wide one here: the questions are
+ * separate (is the GPU busy, is the fabric moving, are tokens coming out) and
+ * putting them on a shared axis would flatten whichever has the smaller range.
+ * Dropped entirely on a short terminal, where the node blocks matter more.
+ */
+function trends(snap: ClusterSnapshot, st: RenderState, W: number): string[] {
+  const H = 5;
+  if (st.height < 30 || W < 60) return [];
+
+  const panels: { label: string; key: string; color: (s: string) => string; fmt: (v: number) => string; max?: number }[] = [
+    { label: "GPU", key: "cluster:gpu", color: C.series1, fmt: (v) => `${v.toFixed(0)}%`, max: 100 },
+    { label: "Fabric", key: "cluster:fabric", color: C.series3, fmt: (v) => fmtGbps(v) },
+  ];
+  if (snap.totals.inferenceEndpoints > 0) {
+    panels.push({ label: "Tokens/s", key: "cluster:tokens", color: C.series2, fmt: (v) => v.toFixed(0) });
+  }
+
+  const gap = 2;
+  const each = Math.floor((W - gap * (panels.length - 1)) / panels.length);
+  if (each < 20) return [];
+
+  const rendered = panels.map((p) => {
+    const values = st.history.get(p.key) ?? [];
+    const body = chart(values, each, H, {
+      color: p.color,
+      format: p.fmt,
+      ...(p.max !== undefined ? { max: p.max } : {}),
+      minRange: p.max === undefined ? 0.1 : 0,
+    });
+    const now = values.length ? p.fmt(values[values.length - 1]!) : "—";
+    const head = `${dim(p.label)} ${bold(p.color(now))}`;
+    return [padEnd(head, each), ...body.map((l) => padEnd(l, each))];
+  });
+
+  const rows = Math.max(...rendered.map((r) => r.length));
+  const out: string[] = [rule("Trends", W)];
+  for (let r = 0; r < rows; r++) {
+    out.push(rendered.map((panel) => panel[r] ?? " ".repeat(each)).join(" ".repeat(gap)));
+  }
+  out.push("");
+  return out;
+}
+
 function overview(snap: ClusterSnapshot, nodes: NodeSnapshot[], st: RenderState, W: number): string[] {
-  const out: string[] = [rule("Nodes", W)];
+  const out: string[] = [...trends(snap, st, W), rule("Nodes", W)];
   for (const n of nodes) {
     out.push(...nodeBlock(n, st, W));
     out.push("");

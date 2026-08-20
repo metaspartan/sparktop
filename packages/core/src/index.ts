@@ -13,3 +13,4 @@ export * from "./updates.ts";
 export * from "./store.ts";
 export * from "./format.ts";
 export * from "./history.ts";
+export * from "./prometheus.ts";

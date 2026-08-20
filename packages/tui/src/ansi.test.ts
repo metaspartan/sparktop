@@ -1,0 +1,75 @@
+/**
+ * Terminal drawing primitives.
+ *
+ * The braille chart packs a 2x4 dot matrix per character using Unicode's own
+ * dot numbering, which is not raster order — an easy thing to get subtly wrong
+ * in a way that still looks plausible, so the geometry is asserted directly.
+ */
+
+import { describe, expect, test } from "bun:test";
+import { chart } from "./ansi.ts";
+
+/** Strip SGR so assertions see only glyphs. */
+const plain = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
+
+describe("braille chart", () => {
+  test("returns exactly the requested number of rows", () => {
+    expect(chart([1, 2, 3], 20, 4)).toHaveLength(4);
+    expect(chart([1, 2, 3], 20, 1)).toHaveLength(1);
+  });
+
+  test("puts a high value at the top row and a low one at the bottom", () => {
+    const high = chart(Array(40).fill(100), 20, 4, { max: 100 }).map(plain);
+    expect(high[0]!.trim()).not.toBe("");
+    expect(high[3]!.trim()).toBe("");
+
+    const low = chart(Array(40).fill(0), 20, 4, { max: 100 }).map(plain);
+    expect(low[0]!.trim()).toBe("");
+    expect(low[3]!.trim()).not.toBe("");
+  });
+
+  test("draws only braille glyphs or spaces", () => {
+    const rows = chart([0, 25, 50, 75, 100, 60, 30], 20, 4, { max: 100 }).map(plain);
+    for (const ch of rows.join("")) {
+      const ok = ch === " " || (ch.charCodeAt(0) >= 0x2800 && ch.charCodeAt(0) <= 0x28ff);
+      expect(ok).toBe(true);
+    }
+  });
+
+  test("connects consecutive samples instead of leaving isolated dots", () => {
+    // A jump from bottom to top must paint the rows in between, or the line
+    // reads as two unrelated specks.
+    const rows = chart([0, 100], 20, 4, { max: 100 }).map(plain);
+    const painted = rows.filter((r) => r.trim() !== "").length;
+    expect(painted).toBe(4);
+  });
+
+  test("anchors the newest sample at the right edge", () => {
+    // Two samples in a 20-wide chart should sit at the right, not the left.
+    const rows = chart([100, 100], 20, 2, { max: 100 }).map(plain);
+    const top = rows[0]!;
+    expect(top.trimEnd().length).toBe(top.length);
+    expect(top.startsWith(" ")).toBe(true);
+  });
+
+  test("sizes the axis gutter to the label, so wide units do not shift the plot", () => {
+    const narrow = chart([1], 30, 2, { format: (v) => `${v.toFixed(0)}%` }).map(plain);
+    const wide = chart([1], 30, 2, { format: (v) => `${v.toFixed(0)} Mbps` }).map(plain);
+    // Same overall width either way; only the split between gutter and plot moves.
+    expect(narrow[0]!.length).toBe(wide[0]!.length);
+    expect(wide[0]!).toContain("Mbps");
+  });
+
+  test("survives an empty series and a flat zero series", () => {
+    expect(() => chart([], 20, 4)).not.toThrow();
+    expect(chart([], 20, 4)).toHaveLength(4);
+    // A flat zero line must not divide by a zero range.
+    const flat = chart([0, 0, 0], 20, 3).map(plain);
+    expect(flat.join("")).not.toContain("NaN");
+  });
+
+  test("degrades to nothing rather than garbage when there is no room", () => {
+    expect(chart([1, 2], 3, 4)).toEqual([]);
+    expect(chart([1, 2], 20, 0)).toEqual([]);
+  });
+});

@@ -54,7 +54,12 @@ Keys:
   process.exit(0);
 }
 
-const HISTORY_LEN = 120;
+/*
+ * Two braille samples per character column, so this is enough history to fill a
+ * chart about 120 columns wide — wider than most terminals, and the excess is
+ * simply not drawn.
+ */
+const HISTORY_LEN = 240;
 
 const state: RenderState = {
   view: "overview",
@@ -93,6 +98,23 @@ function recordHistory(snap: ClusterSnapshot): void {
       n.memory.totalBytes > 0 ? (n.memory.usedBytes / n.memory.totalBytes) * 100 : 0
     );
   }
+
+  /*
+   * Cluster-wide series for the trend charts. Kept alongside the per-node ones
+   * because the charts answer a different question — what the fleet is doing
+   * over the last few minutes, rather than what one machine is doing now.
+   */
+  push("cluster:gpu", snap.totals.cpuUsagePct >= 0 ? avgGpu(snap) : 0);
+  push("cluster:fabric", snap.fabric.totalTrafficGbps);
+  push("cluster:tokens", snap.totals.tokensPerSec);
+  push("cluster:power", snap.totals.powerDrawW);
+}
+
+/** Mean GPU utilisation across online nodes, 0-100. */
+function avgGpu(snap: ClusterSnapshot): number {
+  const live = snap.nodes.filter((n) => n.status === "online" && n.gpu);
+  if (!live.length) return 0;
+  return live.reduce((a, n) => a + (n.gpu?.utilPct ?? 0), 0) / live.length;
 }
 
 function onSnapshot(snap: ClusterSnapshot): void {
