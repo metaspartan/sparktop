@@ -2,8 +2,15 @@
   "name": "sparktop",
   "version": "0.1.0",
   "private": true,
-  "description": "Realtime TUI + web dashboard for multi-node NVIDIA DGX Spark clusters, with 400G ConnectX-7 fabric telemetry",
+  "description": "Realtime TUI + web dashboard for multi-node NVIDIA DGX Spark clusters, with ConnectX-7 RDMA fabric telemetry",
   "license": "MIT",
+  "author": "Carsen Klock",
+  "homepage": "https://github.com/metaspartan/sparktop#readme",
+  "bugs": { "url": "https://github.com/metaspartan/sparktop/issues" },
+  "keywords": [
+    "dgx-spark", "gb10", "nvidia", "rdma", "roce", "connectx",
+    "nccl", "vllm", "monitoring", "tui", "dashboard"
+  ],
   "repository": { "type": "git", "url": "https://github.com/metaspartan/sparktop.git" },
   "workspaces": ["packages/*"],
   "type": "module",

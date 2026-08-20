@@ -40,6 +40,18 @@ const HOST = process.env.SPARKTOP_HOST ?? "0.0.0.0";
 const API_TOKEN = process.env.SPARKTOP_TOKEN ?? "";
 /** Static assets, produced by `bun run build:web`. */
 const WEB_ROOT = resolve(process.env.SPARKTOP_WEB_ROOT ?? join(import.meta.dir, "..", "..", "web", "dist"));
+/*
+ * Read from the manifest rather than repeated as a literal, so a release bump
+ * cannot leave the running server reporting the previous version.
+ */
+const VERSION: string = await (async () => {
+  try {
+    const pkg = await Bun.file(join(import.meta.dir, "..", "..", "..", "package.json")).json();
+    return typeof pkg.version === "string" ? pkg.version : "unknown";
+  } catch {
+    return "unknown";
+  }
+})();
 
 const cfgPath = configPath();
 const config: AppConfig = await loadConfig(cfgPath);
@@ -213,13 +225,19 @@ const server = Bun.serve<SocketData, never>({
     const url = new URL(req.url);
     const { pathname } = url;
 
+    /*
+     * Health stays reachable without a token so container orchestration can
+     * probe it, but it only describes the fleet to a caller that proved it is
+     * allowed to know. An unauthenticated prober needs liveness; it does not
+     * need to learn how many machines exist and how many are reachable.
+     */
     if (pathname === "/api/health") {
+      const live = { ok: true, version: VERSION, uptimeSec: Math.round(process.uptime()) };
+      if (!authorized(req)) return json(live);
       return json({
-        ok: true,
-        version: "0.1.0",
+        ...live,
         nodes: monitor.config.nodes.length,
         online: latest?.totals.nodesOnline ?? 0,
-        uptimeSec: Math.round(process.uptime()),
       });
     }
 

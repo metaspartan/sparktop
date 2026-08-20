@@ -451,14 +451,15 @@ Everything is optional; nodes can also be managed at runtime through the API or 
 - **SSH keys are preferred.** Password auth is supported for nodes where installing a key is inconvenient; passwords are sealed with AES-256-GCM under a key derived from `SPARKTOP_SECRET` before touching disk, and `config/nodes.json` is gitignored and written `0600`.
   This protects the config file, not the running process — anything that can read the environment can decrypt. It is strictly better than plaintext, not a substitute for keys.
 - **`sparktop` needs no privileges on the nodes.** Every value it reads is available to an unprivileged user. Docker metrics need the login user in the `docker` group; without it everything else still works.
-- **The dashboard has no auth by default**, on the assumption it sits on a trusted LAN. Set `SPARKTOP_TOKEN` to require a bearer token. The container runs read-only, as a non-root user, with all capabilities dropped.
+- **The dashboard has no auth by default**, on the assumption it sits on a trusted LAN. Set `SPARKTOP_TOKEN` to require a bearer token. `/api/health` stays reachable either way so container orchestration can probe it, but it reports only liveness to an unauthorised caller — a health probe needs to know the server is up, not how many machines you own. The container runs read-only, as a non-root user, with all capabilities dropped.
+- **Reporting a vulnerability:** see [SECURITY.md](SECURITY.md).
 - Dependencies are scanned with [OSV-Scanner](https://google.github.io/osv-scanner/) in CI and weekly on a schedule. Run it locally with `bun run scan`.
 
 ## HTTP API
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/api/health` | Liveness and node counts |
+| `GET` | `/api/health` | Liveness. Reachable without a token so orchestration can probe it; node counts are included only for an authorised caller |
 | `GET` | `/api/snapshot` | Latest `ClusterSnapshot` |
 | `GET` | `/api/history` | Chart history (shared timeline + series) |
 | `GET` | `/api/config` | Nodes with all secrets stripped |
@@ -515,4 +516,4 @@ Inspired by [sparkDash](https://github.com/MiaAI-Lab/sparkDash), which covers si
 
 ## License
 
-MIT © [metaspartan](https://github.com/metaspartan)
+MIT © [Carsen Klock](https://github.com/metaspartan)
