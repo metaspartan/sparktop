@@ -26,32 +26,62 @@ installed on the Sparks themselves.
 
 ```bash
 git clone https://github.com/metaspartan/sparktop.git && cd sparktop
-./scripts/setup.sh ubuntu@10.0.0.11 ubuntu@10.0.0.12
+./scripts/setup.sh
 ```
 
 Then open <http://localhost:5757>.
 
-That one command generates an SSH key, authorises it on each node — asking for
-each node's password once, and never again — checks what each one reports, writes
-the node registry and starts up:
+**You do not need to know your Sparks' IP addresses.** Run with no arguments and
+setup asks the network which ones are out there — a Spark advertises itself over
+mDNS — then asks for the login user and does the rest:
 
 ```
 sparktop setup
 
-  ✓ 2 node(s): ubuntu@10.0.0.11 ubuntu@10.0.0.12
+  Looking for Sparks on the network...
+  ✓ Found 2: spark-a1b2.local spark-c3d4.local
+
+  Log in as which user? (blank for 'ubuntu')
+  user> ubuntu
+
   ✓ Generated ./config/id_ed25519
-  ✓ ubuntu@10.0.0.11 authorised
-  ✓ ubuntu@10.0.0.12 authorised
+  ✓ ubuntu@spark-a1b2.local authorised
+  ✓ ubuntu@spark-c3d4.local authorised
 
   Checking what each node reports:
-  ✓ spark-01 — DGX Spark · NVIDIA GB10 · 4 RDMA ports · docker
-  ✓ spark-02 — DGX Spark · NVIDIA GB10 · 4 RDMA ports · docker
+  ✓ spark-a1b2 — DGX Spark · NVIDIA GB10 · 4 RDMA ports · docker
+  ✓ spark-c3d4 — DGX Spark · NVIDIA GB10 · 4 RDMA ports · docker
   ✓ Wrote ./config/nodes.json
 ```
 
-Run it with no arguments to be prompted for the node list instead. Re-running is
-safe — nodes that already trust the key are skipped. Pass `--docker` or `--bun`
-to force how it runs, or `--no-start` to configure without launching.
+It authorises an SSH key on each node, asking for that node's password once and
+never again, then writes the node registry and starts up.
+
+You can also name the nodes yourself, by hostname or by address:
+
+```bash
+./scripts/setup.sh ubuntu@spark-a1b2.local ubuntu@spark-c3d4.local
+```
+
+<details>
+<summary>If discovery finds nothing</summary>
+
+mDNS does not cross subnets or most VPNs, and some networks block it. Run
+`hostname` on a Spark and use that name with `.local` appended — that is what
+the Spark answers to:
+
+```bash
+ubuntu@spark-a1b2.local
+```
+
+Failing that, `hostname -I` on the Spark prints its addresses, or your router's
+client list will show it. Prefer the name over the address where you can: a name
+survives a DHCP lease changing.
+</details>
+
+Re-running setup is safe — nodes that already trust the key are skipped. Pass
+`--docker` or `--bun` to force how it runs, or `--no-start` to configure without
+launching.
 
 Prefer the terminal? `bun run tui` gives you [the same data](#terminal-ui)
 without a browser.
@@ -64,7 +94,7 @@ without a browser.
 ```bash
 cp .env.example .env                       # set SPARKTOP_NODES
 ssh-keygen -t ed25519 -f ./config/id_ed25519 -N ""
-for h in 10.0.0.11 10.0.0.12; do ssh-copy-id -i ./config/id_ed25519.pub ubuntu@$h; done
+for h in spark-a1b2.local spark-c3d4.local; do ssh-copy-id -i ./config/id_ed25519.pub ubuntu@$h; done
 SPARKTOP_COMMIT=$(git rev-parse HEAD) docker compose up -d
 ```
 
@@ -82,7 +112,7 @@ adding them, verifying each over SSH before it is saved. Or declare them in the
 environment:
 
 ```bash
-export SPARKTOP_NODES="ubuntu@10.0.0.11,ubuntu@10.0.0.12"
+export SPARKTOP_NODES="ubuntu@spark-a1b2.local,ubuntu@spark-c3d4.local"
 export SPARKTOP_SSH_KEY=/config/id_ed25519
 ```
 </details>

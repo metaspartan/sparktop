@@ -7,10 +7,14 @@
 # nodes, so the only per-node step is authorising an SSH key, which this does
 # for you.
 #
-#   ./scripts/setup.sh                       # interactive
+#   ./scripts/setup.sh                       # finds your Sparks for you
+#   ./scripts/setup.sh ubuntu@spark-a1b2.local ubuntu@spark-c3d4.local
 #   ./scripts/setup.sh ubuntu@10.0.0.11 ubuntu@10.0.0.12
 #   ./scripts/setup.sh --docker ubuntu@10.0.0.11 ubuntu@10.0.0.12
 #   ./scripts/setup.sh --no-start ubuntu@10.0.0.11   # configure only
+#
+# With no arguments it asks the network which Sparks are out there over mDNS,
+# so you never need to look up an IP address.
 #
 set -euo pipefail
 
@@ -45,7 +49,9 @@ for arg in "$@"; do
     # is already up: does everything except launch the server.
     --no-start) MODE="none" ;;
     -h|--help)
-      sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
+      # Print the header comment block, whatever length it has grown to, so
+      # help never silently truncates when this file is edited.
+      awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0"
       exit 0 ;;
     -*) die "Unknown option: $arg" ;;
     *)  NODES+=("$arg") ;;
@@ -57,14 +63,61 @@ bold "sparktop setup"
 echo
 
 # --- 1. Nodes ---------------------------------------------------------------
+#
+# Most people do not know their Sparks' IP addresses, and looking them up in a
+# router's admin page is a miserable first step. A Spark runs avahi and
+# advertises itself over mDNS, so the network can simply be asked. Names are
+# used as-is rather than resolved to addresses: a name survives a DHCP lease
+# changing, an address does not.
+discover() {
+  if command -v avahi-browse >/dev/null 2>&1; then
+    # -p parses to a stable ';'-delimited form; '=' rows are fully resolved.
+    avahi-browse -rpt _ssh._tcp 2>/dev/null | awk -F';' '$1 == "=" { print $7 }'
+  elif command -v dns-sd >/dev/null 2>&1; then
+    # dns-sd never exits on its own, so it is given a moment and then stopped.
+    { dns-sd -B _ssh._tcp local & pid=$!; sleep 4; kill "$pid" 2>/dev/null; } 2>/dev/null |
+      awk '/_ssh\._tcp/ && $NF != "Name" { print $NF ".local" }'
+  fi | sort -u
+}
+
+# Chassis names across the eight GB10 variants. A Spark cannot be identified
+# for certain without logging into it, so this only decides what to suggest —
+# anything found is offered, never assumed.
+SPARK_RE='^(gx10|spark|dgx|zgx|pgx|ai-?top|edgexpert|veriton|promax|pro-max)'
+
 if [ ${#NODES[@]} -eq 0 ]; then
-  info "Enter each Spark as user@host, one per line. Blank line when done."
-  while true; do
-    printf '  node> '
-    read -r line || break
-    [ -z "$line" ] && break
-    NODES+=("$line")
-  done
+  FOUND=()
+  if command -v avahi-browse >/dev/null 2>&1 || command -v dns-sd >/dev/null 2>&1; then
+    info "Looking for Sparks on the network..."
+    while IFS= read -r h; do
+      [ -n "$h" ] && FOUND+=("$h")
+    done < <(discover | grep -Ei "$SPARK_RE" || true)
+  fi
+
+  if [ ${#FOUND[@]} -gt 0 ]; then
+    ok "Found ${#FOUND[@]}: ${FOUND[*]}"
+    echo
+    info "Log in as which user? (blank for '$(id -un)')"
+    printf '  user> '
+    read -r duser || duser=""
+    [ -z "$duser" ] && duser="$(id -un)"
+    for h in "${FOUND[@]}"; do NODES+=("$duser@$h"); done
+    echo
+    info "Using: ${NODES[*]}"
+    info "Press enter to accept, or Ctrl-C to start over and enter them by hand."
+    read -r _ || true
+  else
+    echo
+    info "Enter each Spark as user@host, one per line. Blank line when done."
+    info "Not sure of the address? Run 'hostname' on the Spark and use"
+    info "that name with '.local' — for example ubuntu@spark-a1b2.local"
+    while true; do
+      printf '  node> '
+      read -r line || break
+      [ -z "$line" ] && break
+      NODES+=("$line")
+    done
+  fi
 fi
 [ ${#NODES[@]} -eq 0 ] && die "No nodes given."
 
