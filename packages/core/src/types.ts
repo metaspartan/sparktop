@@ -353,6 +353,17 @@ export interface InferenceEndpoint {
   promptCacheHitPct: number | null;
 
   /**
+   * Speculative decoding, when the engine uses it.
+   *
+   * A draft model proposes several tokens per step and the target model accepts
+   * or rejects them, so output arrives in bursts. The acceptance rate governs
+   * the speed-up, and the mean accepted length is how many tokens each step
+   * actually yields.
+   */
+  specAcceptanceRatePct: number | null;
+  specMeanAcceptedLength: number | null;
+
+  /**
    * Latency, averaged over the interval between the last two scrapes rather
    * than over the server's lifetime. Null when nothing completed in that
    * window — an idle server has no average, and 0ms would read as "instant".

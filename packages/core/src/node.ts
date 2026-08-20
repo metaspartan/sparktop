@@ -100,6 +100,17 @@ const IDLE_BPS_THRESHOLD = 1_000_000; // 1 MB/s — below this a link reads as i
 /** How far back latency means look. Wide enough to contain completed requests. */
 const LATENCY_WINDOW_MS = 60_000;
 
+/**
+ * Averaging window for token throughput.
+ *
+ * Speculative decoding emits several tokens per step and nothing in between, so
+ * a one-second sample of the counter reads anywhere from zero to a full burst.
+ * vLLM's own logger reports over ten seconds for the same reason, and matching
+ * it means sparktop's figure agrees with what the engine says about itself
+ * instead of showing noise the engine has already smoothed away.
+ */
+const THROUGHPUT_WINDOW_MS = 10_000;
+
 export interface NodeCollectorEvents {
   snapshot: (s: NodeSnapshot) => void;
   status: (status: NodeStatus, error: string | null) => void;
@@ -144,6 +155,11 @@ export class NodeCollector extends EventEmitter {
    * gives a mean over requests that actually finished.
    */
   private latencyWindow = new Map<string, { t: number; latency: EngineReading["latency"] }[]>();
+  /** Recent token counters per endpoint, for averaging throughput over a window. */
+  private tokenWindow = new Map<
+    string,
+    { t: number; gen: number | undefined; prompt: number | undefined; finished: number | undefined }[]
+  >();
 
   /*
    * Discovery is done by the slow tier; the fast probe is then rebuilt to
@@ -592,18 +608,33 @@ export class NodeCollector extends EventEmitter {
       const prompt = reading.promptTokensTotal;
       const finished = reading.requestsFinishedTotal;
 
-      const rate = (p: Sample | undefined, v: number | undefined): number | null => {
-        if (v === undefined || !p) return null;
-        const dt = (ts - p.t) / 1000;
+      /*
+       * Throughput over a window rather than between consecutive polls.
+       *
+       * Comparing one poll to the last is correct arithmetic over a window too
+       * short to be meaningful here: with speculative decoding the counter
+       * jumps by a burst and then sits still, so successive samples alternate
+       * between far too high and zero. Averaging over the window gives the rate
+       * the engine itself reports.
+       */
+      const tokens = this.tokenWindow.get(key) ?? [];
+      tokens.push({ t: ts, gen, prompt, finished });
+      while (tokens.length > 1 && ts - tokens[0]!.t > THROUGHPUT_WINDOW_MS) tokens.shift();
+      this.tokenWindow.set(key, tokens);
+      const base = tokens.length > 1 ? tokens[0]! : undefined;
+
+      const rate = (before: number | undefined, now: number | undefined, sinceMs: number | undefined): number | null => {
+        if (now === undefined || before === undefined || sinceMs === undefined) return null;
+        const dt = (ts - sinceMs) / 1000;
         // A restarted server resets its counters; report nothing rather than a
         // negative or absurd spike.
-        if (dt <= 0 || v < p.value) return null;
-        return Math.round(((v - p.value) / dt) * 10) / 10;
+        if (dt <= 0 || now < before) return null;
+        return Math.round(((now - before) / dt) * 10) / 10;
       };
 
-      const genRate = rate(prev?.gen, gen);
-      const promptRate = rate(prev?.prompt, prompt);
-      const finishedRate = rate(prev?.finished, finished);
+      const genRate = rate(base?.gen, gen, base?.t) ?? rate(prev?.gen.value, gen, prev?.gen.t);
+      const promptRate = rate(base?.prompt, prompt, base?.t) ?? rate(prev?.prompt.value, prompt, prev?.prompt.t);
+      const finishedRate = rate(base?.finished, finished, base?.t) ?? rate(prev?.finished.value, finished, prev?.finished.t);
 
       /*
        * Latency over a rolling window, falling back to the lifetime mean.
@@ -675,6 +706,16 @@ export class NodeCollector extends EventEmitter {
         promptTokensPerSec: promptRate,
         requestsPerMin: finishedRate === null ? null : Math.round(finishedRate * 600) / 10,
         cachedPromptTokensTotal: reading.cachedPromptTokensTotal ?? null,
+        // Acceptance rate is what governs the speed-up; mean acceptance length
+        // is how many tokens each model step actually yields.
+        specAcceptanceRatePct:
+          reading.specDraftedTotal && reading.specAcceptedTotal !== undefined && reading.specDraftedTotal > 0
+            ? Math.round((reading.specAcceptedTotal / reading.specDraftedTotal) * 1000) / 10
+            : null,
+        specMeanAcceptedLength:
+          reading.specDraftsTotal && reading.specAcceptedTotal !== undefined && reading.specDraftsTotal > 0
+            ? Math.round((reading.specAcceptedTotal / reading.specDraftsTotal) * 100) / 100
+            : null,
         promptCacheHitPct:
           reading.promptTokensTotal && reading.cachedPromptTokensTotal !== undefined && reading.promptTokensTotal > 0
             ? Math.round((reading.cachedPromptTokensTotal / reading.promptTokensTotal) * 1000) / 10
@@ -697,6 +738,7 @@ export class NodeCollector extends EventEmitter {
     const live = new Set(scrapes.map((x) => String(x.port)));
     for (const k of this.prevInference.keys()) if (!live.has(k)) this.prevInference.delete(k);
     for (const k of this.latencyWindow.keys()) if (!live.has(k)) this.latencyWindow.delete(k);
+    for (const k of this.tokenWindow.keys()) if (!live.has(k)) this.tokenWindow.delete(k);
 
     return out;
   }
@@ -1031,6 +1073,8 @@ function emptyEndpoint(nodeId: string, nodeLabel: string, port: number): Inferen
     requestsPerMin: null,
     cachedPromptTokensTotal: null,
     promptCacheHitPct: null,
+    specAcceptanceRatePct: null,
+    specMeanAcceptedLength: null,
     ttftMs: null,
     interTokenLatencyMs: null,
     perRequestDecodeTokensPerSec: null,

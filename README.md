@@ -275,8 +275,16 @@ Reported per endpoint:
 | **Prefill / Decode phase** | Where a request's time actually went |
 | **Prefix hit** | Prompt tokens served from cache rather than recomputed |
 | **KV cache** | Cache utilisation |
+| **Speculative** | Draft acceptance rate and mean accepted length, where the engine speculates |
 
-Throughput comes from cumulative counters over measured wall time. Latency comes
+Throughput is averaged over a ten-second window, matching what the engine
+reports about itself. A one-second sample is not wrong so much as meaningless
+under speculative decoding: a draft model proposes several tokens per step and
+the target accepts or rejects them, so the counter jumps by a burst and then
+sits still. Successive one-second readings alternate between far too high and
+zero — vLLM's own logger averages over ten seconds for exactly this reason.
+
+Latency comes
 from histograms, averaged over a rolling sixty-second window rather than the
 server's lifetime — dividing `_sum` by `_count` gives the mean since boot, which
 on a server that has served thousands of requests barely moves and says nothing

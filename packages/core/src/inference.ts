@@ -65,6 +65,16 @@ export interface EngineSpec {
   };
   /** Prompt tokens served from the prefix cache rather than computed. */
   cachedPromptTokens: string[];
+  /**
+   * Speculative decoding counters, where the engine does it.
+   *
+   * Worth surfacing because it changes how throughput behaves: a draft model
+   * proposes several tokens per step and the target model accepts or rejects
+   * them, so output arrives in bursts of the accepted length rather than one
+   * token at a time. Sampling that over a short window swings wildly, and the
+   * acceptance rate is what actually governs the speed-up.
+   */
+  specDecode: { accepted: string[]; drafted: string[]; drafts: string[] };
 }
 
 /**
@@ -95,6 +105,12 @@ export const ENGINE_SPECS: EngineSpec[] = [
       decode: ["vllm:request_decode_time_seconds"],
     },
     cachedPromptTokens: ["vllm:prompt_tokens_cached_total"],
+
+    specDecode: {
+      accepted: ["vllm:spec_decode_num_accepted_tokens_total"],
+      drafted: ["vllm:spec_decode_num_draft_tokens_total"],
+      drafts: ["vllm:spec_decode_num_drafts_total"],
+    },
   },
   {
     id: "sglang",
@@ -116,6 +132,12 @@ export const ENGINE_SPECS: EngineSpec[] = [
       decode: [],
     },
     cachedPromptTokens: ["sglang:cached_tokens_total"],
+
+    specDecode: {
+      accepted: ["sglang:spec_accept_length"],
+      drafted: [],
+      drafts: [],
+    },
   },
   {
     id: "llamacpp",
@@ -137,6 +159,7 @@ export const ENGINE_SPECS: EngineSpec[] = [
       decode: [],
     },
     cachedPromptTokens: [],
+    specDecode: { accepted: [], drafted: [], drafts: [] },
   },
   {
     id: "tgi",
@@ -158,6 +181,7 @@ export const ENGINE_SPECS: EngineSpec[] = [
       decode: [],
     },
     cachedPromptTokens: [],
+    specDecode: { accepted: [], drafted: [], drafts: [] },
   },
   {
     id: "triton",
@@ -179,6 +203,7 @@ export const ENGINE_SPECS: EngineSpec[] = [
       decode: [],
     },
     cachedPromptTokens: [],
+    specDecode: { accepted: [], drafted: [], drafts: [] },
   },
 ];
 
@@ -291,6 +316,10 @@ export interface EngineReading {
   generationTokensTotal?: number;
   /** Prompt tokens served from cache rather than computed. */
   cachedPromptTokensTotal?: number;
+  /** Speculative decoding counters, when the engine reports them. */
+  specAcceptedTotal?: number;
+  specDraftedTotal?: number;
+  specDraftsTotal?: number;
   kvCachePct?: number;
   /** Raw histogram totals, for deriving interval means against a prior scrape. */
   latency: Partial<Record<LatencyKey, HistogramTotals>>;
@@ -360,6 +389,9 @@ export function readMetrics(metricsText: string): EngineReading | null {
   set("promptTokensTotal", sumMetric(samples, spec.promptTokens));
   set("generationTokensTotal", sumMetric(samples, spec.genTokens));
   set("cachedPromptTokensTotal", sumMetric(samples, spec.cachedPromptTokens));
+  set("specAcceptedTotal", sumMetric(samples, spec.specDecode.accepted));
+  set("specDraftedTotal", sumMetric(samples, spec.specDecode.drafted));
+  set("specDraftsTotal", sumMetric(samples, spec.specDecode.drafts));
   if (kv !== undefined) {
     // Engines report either a 0-1 ratio or an already-scaled percentage.
     set("kvCachePct", kv <= 1.0001 ? kv * spec.kvCacheScale : kv);

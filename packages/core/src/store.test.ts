@@ -38,6 +38,8 @@ function endpoint(over: Partial<InferenceEndpoint> = {}): InferenceEndpoint {
     requestsPerMin: 6,
     cachedPromptTokensTotal: null,
     promptCacheHitPct: null,
+    specAcceptanceRatePct: null,
+    specMeanAcceptedLength: null,
     ttftMs: null,
     interTokenLatencyMs: null,
     perRequestDecodeTokensPerSec: null,

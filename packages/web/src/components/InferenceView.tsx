@@ -215,6 +215,24 @@ function EndpointRow({ e }: { e: InferenceEndpoint }) {
         </div>
       )}
 
+      {e.specAcceptanceRatePct !== null && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-ink-secondary">
+          <span
+            className="cursor-help"
+            title="Speculative decoding: a draft model proposes tokens and the target model accepts or rejects them. Output therefore arrives in bursts, which is why a one-second throughput reading swings so much."
+          >
+            <span className="text-ink-muted">Speculative</span>{" "}
+            <span className="tnum font-medium text-ink">{e.specAcceptanceRatePct.toFixed(0)}%</span> accepted
+          </span>
+          {e.specMeanAcceptedLength !== null && (
+            <span className="tnum">
+              <span className="text-ink-muted">mean length</span>{" "}
+              <span className="font-medium text-ink">{e.specMeanAcceptedLength.toFixed(2)}</span> tok/step
+            </span>
+          )}
+        </div>
+      )}
+
       {e.promptCacheHitPct !== null && (
         <div className="mt-1.5 flex items-center gap-2">
           <span
