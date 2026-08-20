@@ -212,8 +212,34 @@ fast probe is then rebuilt to scrape only the ports found, with the response
 filtered node-side to the engine's own metric families — a vLLM body is ~32KB
 and most of it is Python instrumentation nobody reads.
 
-Token rates come from cumulative counters divided by measured wall time. Where
-one logical server is reachable twice (behind a proxy, or on two ports) the
+Reported per endpoint:
+
+| Metric | Meaning |
+|---|---|
+| **Decode** tok/s | Output tokens the server produces, aggregate |
+| **Prefill** tok/s | Prompt tokens ingested, including cache hits |
+| **TTFT** | Time to first token |
+| **Per-token** | Inter-token latency, and the decode speed one request sees |
+| **Queue** | Time waiting before work began |
+| **End to end** | Full request latency |
+| **Prefill / Decode phase** | Where a request's time actually went |
+| **Prefix hit** | Prompt tokens served from cache rather than recomputed |
+| **KV cache** | Cache utilisation |
+
+Throughput comes from cumulative counters over measured wall time. Latency comes
+from histograms, averaged over a rolling sixty-second window rather than the
+server's lifetime — dividing `_sum` by `_count` gives the mean since boot, which
+on a server that has served thousands of requests barely moves and says nothing
+about now. When nothing completed even in that window, the lifetime mean is
+shown rather than a dash.
+
+Two figures are easy to misread. **Prefill tok/s counts cached tokens**: a high
+prefix-hit rate (95%+ is common with a shared system prompt) means far less work
+was done than the number suggests. And **aggregate decode is not per-request
+speed** — a server producing 60 tok/s across four concurrent requests gives each
+of them about 15, which is what a user actually experiences; both are shown.
+
+Where one logical server is reachable twice (behind a proxy, or on two ports) the
 duplicate is folded out of cluster totals, so a tensor-parallel job — where only
 rank 0 serves an API — is not double counted.
 

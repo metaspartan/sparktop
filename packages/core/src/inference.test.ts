@@ -6,7 +6,15 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { detectEngine, parsePrometheus, readMetrics, readOllama, readOpenAiModels } from "./inference.ts";
+import {
+  detectEngine,
+  histogramIntervalMean,
+  histogramLifetimeMean,
+  parsePrometheus,
+  readMetrics,
+  readOllama,
+  readOpenAiModels,
+} from "./inference.ts";
 import { parseDiscoveredEndpoints, parseInferenceScrapes } from "./parse.ts";
 import { US } from "./probe.ts";
 
@@ -113,5 +121,50 @@ describe("probe output", () => {
     const parts = parseInferenceScrapes(`EP${US}8888${US}metrics\n${US}END${US}\n`);
     expect(parts).toHaveLength(1);
     expect(parts[0]!.body).toBe("");
+  });
+});
+
+describe("latency histograms", () => {
+  const at = (sum: number, count: number) => ({ sum, count });
+
+  test("averages over the interval, not the server's lifetime", () => {
+    // Lifetime mean is 3431/705 = 4.9s, but the last two requests averaged 1s.
+    const before = at(3431, 705);
+    const now = at(3433, 707);
+    expect(histogramIntervalMean(before, now)).toBeCloseTo(1, 5);
+    expect(histogramLifetimeMean(now)).toBeCloseTo(4.855, 2);
+  });
+
+  test("returns null when nothing completed in the interval", () => {
+    // An idle server: no new samples, so there is no average to report.
+    expect(histogramIntervalMean(at(100, 10), at(100, 10))).toBeNull();
+  });
+
+  test("returns null when counters reset", () => {
+    expect(histogramIntervalMean(at(3431, 705), at(2, 1))).toBeNull();
+  });
+
+  test("returns null without a prior scrape", () => {
+    expect(histogramIntervalMean(undefined, at(10, 2))).toBeNull();
+  });
+
+  test("reads sum and count out of a real vLLM body", () => {
+    const body = `vllm:num_requests_running 1
+vllm:time_to_first_token_seconds_count{model_name="m"} 705.0
+vllm:time_to_first_token_seconds_sum{model_name="m"} 3431.7467172145844
+vllm:inter_token_latency_seconds_count{model_name="m"} 110186.0
+vllm:inter_token_latency_seconds_sum{model_name="m"} 10130.906027254
+vllm:prompt_tokens_total{model_name="m"} 7.2873213e+07
+vllm:prompt_tokens_cached_total{model_name="m"} 6.9694976e+07`;
+    const r = readMetrics(body)!;
+    expect(r.latency.ttft).toEqual({ sum: 3431.7467172145844, count: 705 });
+    expect(r.latency.interToken!.count).toBe(110186);
+    // Prefix cache carries the great majority of prompt tokens here.
+    expect(r.cachedPromptTokensTotal).toBeCloseTo(69694976, 0);
+    expect(r.promptTokensTotal).toBeCloseTo(72873213, 0);
+  });
+
+  test("leaves latency empty for an engine that exposes none", () => {
+    expect(readMetrics("llamacpp:requests_processing 1")!.latency).toEqual({});
   });
 });

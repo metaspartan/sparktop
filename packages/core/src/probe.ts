@@ -203,10 +203,16 @@ export function buildFastProbe(endpoints: DiscoveredEndpoint[] = []): string {
        * keeping only the engine's own metric families cuts what crosses the SSH
        * channel every second by roughly 90%. The engine signature survives,
        * because that is one of the prefixes kept.
+       *
+       * Histogram buckets are dropped too, and that is load-bearing rather than
+       * merely tidy. Each histogram carries ~20 bucket lines; across a dozen
+       * families they exhaust the byte cap before the `_sum` and `_count` lines
+       * that latency means are computed from, so keeping buckets silently costs
+       * every latency figure. Percentiles would need them; means do not.
        */
       const fetchCmd =
         e.kind === "metrics"
-          ? `curl -s -m 2 '${url}' 2>/dev/null | grep -E '^(vllm:|sglang:|llamacpp:|tgi_|nv_inference)' | head -c 16384`
+          ? `curl -s -m 2 '${url}' 2>/dev/null | grep -E '^(vllm:|sglang:|llamacpp:|tgi_|nv_inference)' | grep -vE '_bucket[{ ]|_created[{ ]' | head -c 16384`
           : `curl -s -m 2 '${url}' 2>/dev/null | head -c 4096`;
       return [
         `printf 'EP${US}%s${US}%s\\n' '${e.port}' '${e.kind}'`,

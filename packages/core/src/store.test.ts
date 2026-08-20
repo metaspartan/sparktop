@@ -11,6 +11,11 @@ import { HistoryDb } from "./store.ts";
 import type { ClusterSnapshot, InferenceEndpoint, NodeSnapshot } from "./types.ts";
 
 function endpoint(over: Partial<InferenceEndpoint> = {}): InferenceEndpoint {
+  // decodeTokensPerSec is canonical; the deprecated alias is mirrored so a
+  // fixture that sets either one stays self-consistent.
+  const decode = over.decodeTokensPerSec ?? over.generationTokensPerSec;
+  const merged: Partial<InferenceEndpoint> =
+    decode === undefined ? over : { ...over, decodeTokensPerSec: decode, generationTokensPerSec: decode };
   return {
     id: "n1:8888",
     nodeId: "n1",
@@ -26,10 +31,21 @@ function endpoint(over: Partial<InferenceEndpoint> = {}): InferenceEndpoint {
     promptTokensTotal: 5000,
     generationTokensTotal: 1000,
     kvCachePct: 12,
+    decodeTokensPerSec: 40,
+    prefillTokensPerSec: 10,
     generationTokensPerSec: 40,
     promptTokensPerSec: 10,
     requestsPerMin: 6,
-    ...over,
+    cachedPromptTokensTotal: null,
+    promptCacheHitPct: null,
+    ttftMs: null,
+    interTokenLatencyMs: null,
+    perRequestDecodeTokensPerSec: null,
+    e2eLatencyMs: null,
+    queueLatencyMs: null,
+    prefillMs: null,
+    decodeMs: null,
+    ...merged,
   };
 }
 

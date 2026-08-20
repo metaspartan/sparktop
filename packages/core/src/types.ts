@@ -328,10 +328,44 @@ export interface InferenceEndpoint {
   generationTokensTotal: number | null;
   kvCachePct: number | null;
 
-  /** Derived from cumulative counters over measured wall time. */
+  /**
+   * Decode throughput: output tokens produced per second, server-wide.
+   * Derived from cumulative counters over measured wall time.
+   */
+  decodeTokensPerSec: number | null;
+  /**
+   * Prefill throughput: prompt tokens ingested per second.
+   *
+   * Counts every prompt token, including those served from the prefix cache —
+   * see `promptCacheHitPct`, which is often the majority and means far less
+   * work was actually done than this figure implies.
+   */
+  prefillTokensPerSec: number | null;
+  /** @deprecated Use decodeTokensPerSec. Kept so older clients keep working. */
   generationTokensPerSec: number | null;
+  /** @deprecated Use prefillTokensPerSec. */
   promptTokensPerSec: number | null;
   requestsPerMin: number | null;
+
+  /** Prompt tokens served from the prefix cache rather than recomputed. */
+  cachedPromptTokensTotal: number | null;
+  /** Share of prompt tokens that hit the prefix cache, 0-100. */
+  promptCacheHitPct: number | null;
+
+  /**
+   * Latency, averaged over the interval between the last two scrapes rather
+   * than over the server's lifetime. Null when nothing completed in that
+   * window — an idle server has no average, and 0ms would read as "instant".
+   */
+  ttftMs: number | null;
+  /** Time per output token during decode. */
+  interTokenLatencyMs: number | null;
+  /** Decode speed a single request sees, i.e. 1000 / interTokenLatencyMs. */
+  perRequestDecodeTokensPerSec: number | null;
+  e2eLatencyMs: number | null;
+  queueLatencyMs: number | null;
+  prefillMs: number | null;
+  decodeMs: number | null;
 
   /** Container serving this port, when it could be attributed. */
   containerName?: string;

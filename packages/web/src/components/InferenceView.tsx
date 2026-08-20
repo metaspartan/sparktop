@@ -35,7 +35,7 @@ export function InferenceView({ nodes, history, themeKey }: Props) {
     );
   }
 
-  const totalTokens = endpoints.reduce((a, e) => a + (e.generationTokensPerSec ?? 0), 0);
+  const totalTokens = endpoints.reduce((a, e) => a + (e.decodeTokensPerSec ?? 0), 0);
   const running = endpoints.reduce((a, e) => a + (e.requestsRunning ?? 0), 0);
   const waiting = endpoints.reduce((a, e) => a + (e.requestsWaiting ?? 0), 0);
 
@@ -57,8 +57,13 @@ export function InferenceView({ nodes, history, themeKey }: Props) {
         }
         bodyClass="p-0"
       >
-        <div className="grid grid-cols-3 gap-4 border-b border-edge p-4">
-          <Stat label="Generation" value={`${Math.round(totalTokens * 10) / 10}`} sub="tokens/sec" />
+        <div className="grid grid-cols-2 gap-4 border-b border-edge p-4 sm:grid-cols-4">
+          <Stat label="Decode" value={`${Math.round(totalTokens * 10) / 10}`} sub="output tokens/sec" />
+          <Stat
+            label="Prefill"
+            value={`${Math.round(endpoints.reduce((a, e) => a + (e.prefillTokensPerSec ?? 0), 0) * 10) / 10}`}
+            sub="prompt tokens/sec"
+          />
           <Stat label="In flight" value={String(running)} sub="requests" />
           <Stat label="Queued" value={String(waiting)} sub="waiting" />
         </div>
@@ -103,6 +108,30 @@ export function InferenceView({ nodes, history, themeKey }: Props) {
   );
 }
 
+/** One latency figure. Null reads as "no completions", never as zero. */
+function Latency({
+  label,
+  ms,
+  hint,
+  extra,
+}: {
+  label: string;
+  ms: number | null;
+  hint: string;
+  extra?: string;
+}) {
+  const shown = ms === null ? "—" : ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${ms.toFixed(0)}ms`;
+  return (
+    <div className="min-w-0 cursor-help" title={hint}>
+      <div className="truncate text-ink-muted">{label}</div>
+      <div className="tnum truncate font-medium text-ink">
+        {shown}
+        {extra && <span className="ml-1 font-normal text-ink-muted">{extra}</span>}
+      </div>
+    </div>
+  );
+}
+
 function EndpointRow({ e }: { e: InferenceEndpoint }) {
   if (!e.reachable) {
     return (
@@ -133,7 +162,7 @@ function EndpointRow({ e }: { e: InferenceEndpoint }) {
           {e.containerName && <Badge tone="neutral">{e.containerName}</Badge>}
         </div>
         <span className="tnum text-[12px] font-semibold text-ink">
-          {num(e.generationTokensPerSec)} <span className="font-normal text-ink-muted">tok/s</span>
+          {num(e.decodeTokensPerSec)} <span className="font-normal text-ink-muted">tok/s decode</span>
         </span>
       </div>
 
@@ -158,12 +187,48 @@ function EndpointRow({ e }: { e: InferenceEndpoint }) {
             rate <span className="font-medium text-ink">{num(e.requestsPerMin)}</span>/min
           </span>
         )}
-        {e.promptTokensPerSec !== null && (
+        {e.prefillTokensPerSec !== null && (
           <span className="tnum">
-            prompt <span className="font-medium text-ink">{num(e.promptTokensPerSec)}</span> tok/s
+            prefill <span className="font-medium text-ink">{num(e.prefillTokensPerSec)}</span> tok/s
           </span>
         )}
       </div>
+
+      {/* Latency, averaged over the last interval rather than the server's
+          lifetime. A dash means nothing completed in that window. */}
+      <div className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] sm:grid-cols-4">
+        <Latency label="TTFT" ms={e.ttftMs} hint="Time to first token" />
+        <Latency
+          label="Per-token"
+          ms={e.interTokenLatencyMs}
+          hint="Inter-token latency during decode"
+          extra={e.perRequestDecodeTokensPerSec !== null ? `${e.perRequestDecodeTokensPerSec}/s per req` : undefined}
+        />
+        <Latency label="Queue" ms={e.queueLatencyMs} hint="Waiting before work began" />
+        <Latency label="End to end" ms={e.e2eLatencyMs} hint="Full request latency" />
+      </div>
+
+      {(e.prefillMs !== null || e.decodeMs !== null) && (
+        <div className="mt-1 grid grid-cols-2 gap-x-4 text-[11px] sm:grid-cols-4">
+          <Latency label="Prefill" ms={e.prefillMs} hint="Prefill phase, per request" />
+          <Latency label="Decode" ms={e.decodeMs} hint="Decode phase, per request" />
+        </div>
+      )}
+
+      {e.promptCacheHitPct !== null && (
+        <div className="mt-1.5 flex items-center gap-2">
+          <span
+            className="w-16 shrink-0 cursor-help text-[11px] text-ink-muted"
+            title="Share of prompt tokens served from the prefix cache instead of being recomputed. A high rate means prefill throughput reflects far less work than the raw figure suggests."
+          >
+            Prefix hit
+          </span>
+          <Meter value={e.promptCacheHitPct} tone="series-3" className="flex-1" />
+          <span className="tnum w-10 shrink-0 text-right text-[11px] text-ink-secondary">
+            {e.promptCacheHitPct.toFixed(0)}%
+          </span>
+        </div>
+      )}
 
       {e.kvCachePct !== null && (
         <div className="mt-1.5 flex items-center gap-2">

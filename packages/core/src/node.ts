@@ -15,7 +15,15 @@ import { Client, type ConnectConfig } from "ssh2";
 import { SLOW_PROBE, buildFastProbe, type DiscoveredEndpoint } from "./probe.ts";
 import { decryptSecret } from "./crypto.ts";
 import { detectVariant, isDgxSpark } from "./variants.ts";
-import { readMetrics, readOllama, readOpenAiModels } from "./inference.ts";
+import {
+  histogramIntervalMean,
+  histogramLifetimeMean,
+  readMetrics,
+  readOllama,
+  readOpenAiModels,
+  type EngineReading,
+  type LatencyKey,
+} from "./inference.ts";
 import type {
   DockerContainer,
   FabricErrors,
@@ -89,6 +97,9 @@ const IB_WORD_BYTES = 4;
 
 const IDLE_BPS_THRESHOLD = 1_000_000; // 1 MB/s — below this a link reads as idle.
 
+/** How far back latency means look. Wide enough to contain completed requests. */
+const LATENCY_WINDOW_MS = 60_000;
+
 export interface NodeCollectorEvents {
   snapshot: (s: NodeSnapshot) => void;
   status: (status: NodeStatus, error: string | null) => void;
@@ -123,6 +134,16 @@ export class NodeCollector extends EventEmitter {
   private prevFaults = new Map<string, number>();
   /** Cumulative inference counters, for deriving token and request rates. */
   private prevInference = new Map<string, { gen: Sample; prompt: Sample; finished: Sample }>();
+  /*
+   * Recent latency histograms per endpoint, oldest first.
+   *
+   * Latency means need a window wide enough to contain completed requests. One
+   * poll interval usually contains none — a single long generation completes
+   * nothing for tens of seconds — so comparing consecutive scrapes reports "no
+   * data" almost always. Comparing against a scrape from a minute ago instead
+   * gives a mean over requests that actually finished.
+   */
+  private latencyWindow = new Map<string, { t: number; latency: EngineReading["latency"] }[]>();
 
   /*
    * Discovery is done by the slow tier; the fast probe is then rebuilt to
@@ -550,7 +571,12 @@ export class NodeCollector extends EventEmitter {
         scrape.kind === "ollama"
           ? readOllama(scrape.body)
           : scrape.kind === "openai"
-            ? { engine: "openai" as const, engineLabel: "OpenAI-compatible", models: readOpenAiModels(scrape.body) }
+            ? {
+                engine: "openai" as const,
+                engineLabel: "OpenAI-compatible",
+                models: readOpenAiModels(scrape.body),
+                latency: {},
+              }
             : readMetrics(scrape.body);
 
       if (!reading) {
@@ -578,6 +604,33 @@ export class NodeCollector extends EventEmitter {
       const genRate = rate(prev?.gen, gen);
       const promptRate = rate(prev?.prompt, prompt);
       const finishedRate = rate(prev?.finished, finished);
+
+      /*
+       * Latency over a rolling window, falling back to the lifetime mean.
+       *
+       * The window is compared against its oldest retained scrape, so the
+       * result covers every request that completed in the last minute. When
+       * even that contains no completions — a genuinely idle server — the
+       * lifetime mean is shown rather than a dash, since "the average request
+       * took this long" is still true, just not recent.
+       */
+      const window = this.latencyWindow.get(key) ?? [];
+      window.push({ t: ts, latency: reading.latency });
+      while (window.length > 1 && ts - window[0]!.t > LATENCY_WINDOW_MS) window.shift();
+      this.latencyWindow.set(key, window);
+      const oldest = window.length > 1 ? window[0] : undefined;
+
+      const latencyMs = (k: LatencyKey): number | null => {
+        const windowed = histogramIntervalMean(oldest?.latency?.[k], reading.latency[k]);
+        const value = windowed ?? histogramLifetimeMean(reading.latency[k]);
+        return value === null ? null : Math.round(value * 1000 * 10) / 10;
+      };
+      const ttftMs = latencyMs("ttft");
+      const interTokenMs = latencyMs("interToken");
+      const e2eMs = latencyMs("e2e");
+      const queueMs = latencyMs("queue");
+      const prefillMs = latencyMs("prefill");
+      const decodeMs = latencyMs("decode");
 
       this.prevInference.set(key, {
         gen: { value: gen ?? 0, t: ts },
@@ -615,10 +668,27 @@ export class NodeCollector extends EventEmitter {
         requestsFinishedTotal: finished ?? null,
         promptTokensTotal: prompt ?? null,
         generationTokensTotal: gen ?? null,
-        kvCachePct: reading.kvCachePct ?? null,
+        kvCachePct: reading.kvCachePct === undefined ? null : Math.round(reading.kvCachePct * 10) / 10,
+        decodeTokensPerSec: genRate,
+        prefillTokensPerSec: promptRate,
         generationTokensPerSec: genRate,
         promptTokensPerSec: promptRate,
         requestsPerMin: finishedRate === null ? null : Math.round(finishedRate * 600) / 10,
+        cachedPromptTokensTotal: reading.cachedPromptTokensTotal ?? null,
+        promptCacheHitPct:
+          reading.promptTokensTotal && reading.cachedPromptTokensTotal !== undefined && reading.promptTokensTotal > 0
+            ? Math.round((reading.cachedPromptTokensTotal / reading.promptTokensTotal) * 1000) / 10
+            : null,
+        ttftMs,
+        interTokenLatencyMs: interTokenMs,
+        // Per-request decode speed, which is what one user experiences —
+        // distinct from the server's aggregate decode throughput.
+        perRequestDecodeTokensPerSec:
+          interTokenMs && interTokenMs > 0 ? Math.round((1000 / interTokenMs) * 10) / 10 : null,
+        e2eLatencyMs: e2eMs,
+        queueLatencyMs: queueMs,
+        prefillMs,
+        decodeMs,
         ...(container ? { containerName: container.name } : {}),
       });
     }
@@ -626,6 +696,7 @@ export class NodeCollector extends EventEmitter {
     // Forget counters for endpoints that no longer exist.
     const live = new Set(scrapes.map((x) => String(x.port)));
     for (const k of this.prevInference.keys()) if (!live.has(k)) this.prevInference.delete(k);
+    for (const k of this.latencyWindow.keys()) if (!live.has(k)) this.latencyWindow.delete(k);
 
     return out;
   }
@@ -953,9 +1024,20 @@ function emptyEndpoint(nodeId: string, nodeLabel: string, port: number): Inferen
     promptTokensTotal: null,
     generationTokensTotal: null,
     kvCachePct: null,
+    decodeTokensPerSec: null,
+    prefillTokensPerSec: null,
     generationTokensPerSec: null,
     promptTokensPerSec: null,
     requestsPerMin: null,
+    cachedPromptTokensTotal: null,
+    promptCacheHitPct: null,
+    ttftMs: null,
+    interTokenLatencyMs: null,
+    perRequestDecodeTokensPerSec: null,
+    e2eLatencyMs: null,
+    queueLatencyMs: null,
+    prefillMs: null,
+    decodeMs: null,
   };
 }
 

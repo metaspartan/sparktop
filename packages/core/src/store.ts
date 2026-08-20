@@ -176,7 +176,7 @@ export class HistoryDb {
       for (const model of models) {
         seen.add(`${e.id}|${model}`);
         const open = openStmt.get(e.id, model);
-        const tps = e.generationTokensPerSec ?? 0;
+        const tps = e.decodeTokensPerSec ?? e.generationTokensPerSec ?? 0;
 
         if (open && ts - open.last_seen_at <= RUN_GAP_MS) {
           update.run(
@@ -237,7 +237,7 @@ export class HistoryDb {
     this.db.transaction(() => {
       for (const e of endpoints) {
         if (!e.reachable) continue;
-        insert.run(ts, e.id, e.nodeId, e.generationTokensPerSec ?? 0, e.requestsRunning ?? 0, e.kvCachePct);
+        insert.run(ts, e.id, e.nodeId, e.decodeTokensPerSec ?? e.generationTokensPerSec ?? 0, e.requestsRunning ?? 0, e.kvCachePct);
       }
     })();
   }
