@@ -129,6 +129,49 @@ export function Sparkline({
   );
 }
 
+/**
+ * Per-core utilisation strip.
+ *
+ * A single aggregate CPU figure hides the thing you usually want to know on a
+ * 20-core GB10: whether load is spread across the cores or pinned to a couple
+ * of them. Each core is one bar, in core order, so the split between the
+ * performance and efficiency clusters stays visible.
+ */
+export function CoreStrip({ cores, height = 26 }: { cores: number[]; height?: number }) {
+  if (!cores.length) return null;
+  return (
+    <div
+      className="flex items-end gap-[2px]"
+      style={{ height }}
+      role="img"
+      aria-label={`Per-core CPU utilisation across ${cores.length} cores, peak ${Math.max(...cores).toFixed(0)}%`}
+    >
+      {cores.map((pct, i) => {
+        const tone = pct >= 95 ? "critical" : pct >= 80 ? "warning" : "accent";
+        const color = {
+          accent: "var(--accent)",
+          warning: "var(--status-warning)",
+          critical: "var(--status-critical)",
+        }[tone];
+        return (
+          <div
+            key={i}
+            className="relative min-w-[3px] flex-1 rounded-[2px] bg-surface-2"
+            style={{ height }}
+            title={`Core ${i}: ${pct.toFixed(0)}%`}
+          >
+            <div
+              className="absolute bottom-0 left-0 right-0 rounded-[2px] transition-[height] duration-300 ease-out"
+              // A floor keeps an idle core visible as a core rather than a gap.
+              style={{ height: `${Math.max(6, pct)}%`, background: color, opacity: pct < 2 ? 0.35 : 1 }}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function StatusDot({ status }: { status: "online" | "offline" | "connecting" | "error" }) {
   const map = {
     online: { c: "var(--status-good)", t: "Online" },

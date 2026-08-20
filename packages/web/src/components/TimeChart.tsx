@@ -199,14 +199,26 @@ export function TimeChart({
     };
   }, [height, minRange, fill, themeKey, series.map((s) => s.label).join("|")]);
 
+  /*
+   * Feed data without rebuilding the plot.
+   *
+   * The redraw is deferred to the next animation frame and any earlier pending
+   * frame is dropped, so a burst of snapshots costs one paint instead of
+   * several. With a dozen charts on screen that is the difference between
+   * keeping up and queueing work behind the compositor.
+   */
   useEffect(() => {
     const u = plotRef.current;
     if (!u) return;
     // Redrawing a chart nobody can see is pure waste; the next visible tick
     // repaints from the full buffer anyway.
     if (document.hidden) return;
-    const x = ts.map((t) => t / 1000);
-    u.setData([x, ...series.map((s) => s.values)] as unknown as uPlot.AlignedData);
+
+    const frame = requestAnimationFrame(() => {
+      const x = ts.map((t) => t / 1000);
+      u.setData([x, ...series.map((s) => s.values)] as unknown as uPlot.AlignedData);
+    });
+    return () => cancelAnimationFrame(frame);
   }, [ts, series]);
 
   return (

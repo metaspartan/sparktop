@@ -19,7 +19,7 @@ import {
   pctOf,
   shortImage,
 } from "@sparktop/core";
-import { Badge, Card, LegendItem, Meter, Sparkline, Stat, StatusDot, tempTone, utilTone } from "./primitives";
+import { Badge, Card, CoreStrip, LegendItem, Meter, Sparkline, Stat, StatusDot, tempTone, utilTone } from "./primitives";
 import { TimeChart } from "./TimeChart";
 import { VariantIcon } from "./VariantIcon";
 
@@ -249,6 +249,21 @@ function OverviewTab({ node, memPct }: { node: NodeSnapshot; memPct: number }) {
           <Row label="Load avg" value={node.cpu.loadAvg.map((n) => n.toFixed(2)).join("  ")} />
           <Row label="Processes" value={`${node.cpu.procsRunning} / ${node.cpu.procsTotal}`} />
         </div>
+
+        {node.cpu.perCorePct.length > 0 && (
+          <div className="pt-1">
+            <div className="mb-1 flex items-baseline justify-between gap-2">
+              <span className="text-[11px] font-medium uppercase tracking-wide text-ink-muted">
+                Per-core
+              </span>
+              <span className="tnum text-[11px] text-ink-secondary">
+                {node.cpu.perCorePct.length} cores · peak{" "}
+                {Math.max(...node.cpu.perCorePct).toFixed(0)}%
+              </span>
+            </div>
+            <CoreStrip cores={node.cpu.perCorePct} />
+          </div>
+        )}
       </div>
 
       <div className="space-y-3">
