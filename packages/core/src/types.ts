@@ -349,7 +349,11 @@ export interface InferenceEndpoint {
 
   /** Prompt tokens served from the prefix cache rather than recomputed. */
   cachedPromptTokensTotal: number | null;
-  /** Share of prompt tokens that hit the prefix cache, 0-100. */
+  /**
+   * Share of prompt tokens that hit the prefix cache, 0-100, over the recent
+   * window rather than the server's lifetime — a cumulative ratio on a server
+   * up for hours stops responding to what is happening now.
+   */
   promptCacheHitPct: number | null;
 
   /**
@@ -357,16 +361,32 @@ export interface InferenceEndpoint {
    *
    * A draft model proposes several tokens per step and the target model accepts
    * or rejects them, so output arrives in bursts. The acceptance rate governs
-   * the speed-up, and the mean accepted length is how many tokens each step
-   * actually yields.
+   * the speed-up. Mean accepted length is how many tokens each step yields, and
+   * counts the target model's own bonus token as well as the accepted drafts —
+   * so it is `1 + accepted/drafts` and never falls below 1, matching the figure
+   * the engine reports for itself. Both are windowed, like the cache hit rate.
    */
   specAcceptanceRatePct: number | null;
   specMeanAcceptedLength: number | null;
 
   /**
-   * Latency, averaged over the interval between the last two scrapes rather
-   * than over the server's lifetime. Null when nothing completed in that
-   * window — an idle server has no average, and 0ms would read as "instant".
+   * How the latency figures below were derived.
+   *
+   * `"window"` means they cover only requests that completed in the last
+   * minute — a live reading. `"lifetime"` means nothing completed in that
+   * window and the figures are the server's running average since it started,
+   * which can be hours old and will not move while the server is idle. The
+   * distinction matters because the two are indistinguishable once rendered:
+   * a stale mean sitting beside a decode rate of zero otherwise reads as a
+   * current measurement. Null when there is no latency data at all.
+   */
+  latencyBasis: "window" | "lifetime" | null;
+
+  /**
+   * Latency, averaged over requests completing in the last minute, falling
+   * back to the server's lifetime average when none did — see `latencyBasis`
+   * to tell which. Null when the engine has served nothing at all, since an
+   * idle server has no average and 0ms would read as "instant".
    */
   ttftMs: number | null;
   /** Time per output token during decode. */

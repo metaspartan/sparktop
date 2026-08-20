@@ -178,7 +178,19 @@ async function serveStatic(pathname: string): Promise<Response> {
   if (!target.startsWith(WEB_ROOT)) return new Response("Forbidden", { status: 403 });
 
   let file = Bun.file(target);
-  if (rel === "" || !(await file.exists())) file = Bun.file(join(WEB_ROOT, "index.html"));
+  if (!(await file.exists())) {
+    /*
+     * Only client-side routes fall back to the shell. A request that names a
+     * file extension is asking for an asset, and answering it with index.html
+     * returns HTML under a 200 — so a missing image decodes as garbage instead
+     * of failing cleanly, and a missing script fails somewhere far from the
+     * cause.
+     */
+    if (rel !== "" && /\.[a-z0-9]{2,5}$/i.test(rel)) {
+      return new Response("Not found", { status: 404 });
+    }
+    file = Bun.file(join(WEB_ROOT, "index.html"));
+  }
   if (!(await file.exists())) return new Response("Not found", { status: 404 });
 
   const ext = (file.name ?? "").slice((file.name ?? "").lastIndexOf("."));

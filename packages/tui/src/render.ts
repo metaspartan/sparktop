@@ -124,7 +124,7 @@ function overview(snap: ClusterSnapshot, nodes: NodeSnapshot[], st: RenderState,
       out.push(
         `  ${busy ? C.good("●") : dim("●")} ${bold(C.ink(padEnd(`${e.nodeLabel}:${e.port}`, 22)))}` +
           `${C.series1(padEnd(e.engineLabel, 12))}` +
-          `${padStart(e.generationTokensPerSec === null ? "-" : e.generationTokensPerSec.toFixed(1), 7)} ${dim("tok/s")}  ` +
+          `${padStart(e.decodeTokensPerSec === null ? "-" : e.decodeTokensPerSec.toFixed(1), 7)} ${dim("tok/s")}  ` +
           `${dim("run")} ${e.requestsRunning ?? "-"}  ${dim("queue")} ${e.requestsWaiting ?? "-"}  ` +
           `${dim("served")} ${e.requestsFinishedTotal ?? "-"}` +
           (e.kvCachePct !== null ? `  ${dim("kv")} ${e.kvCachePct.toFixed(0)}%` : "")

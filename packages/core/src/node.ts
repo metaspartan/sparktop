@@ -16,6 +16,7 @@ import { SLOW_PROBE, buildFastProbe, type DiscoveredEndpoint } from "./probe.ts"
 import { decryptSecret } from "./crypto.ts";
 import { detectVariant, isDgxSpark } from "./variants.ts";
 import {
+  counterIntervalRatio,
   histogramIntervalMean,
   histogramLifetimeMean,
   readMetrics,
@@ -155,10 +156,27 @@ export class NodeCollector extends EventEmitter {
    * gives a mean over requests that actually finished.
    */
   private latencyWindow = new Map<string, { t: number; latency: EngineReading["latency"] }[]>();
-  /** Recent token counters per endpoint, for averaging throughput over a window. */
+  /**
+   * Recent counters per endpoint, for averaging over a window.
+   *
+   * Ratios derived from these — speculative acceptance, prompt cache hit rate —
+   * are kept here alongside the throughput counters because they have the same
+   * problem: taken as lifetime totals they are averages over every request since
+   * the server booted, so on a server up for hours they barely respond to what
+   * is happening now.
+   */
   private tokenWindow = new Map<
     string,
-    { t: number; gen: number | undefined; prompt: number | undefined; finished: number | undefined }[]
+    {
+      t: number;
+      gen: number | undefined;
+      prompt: number | undefined;
+      finished: number | undefined;
+      cached: number | undefined;
+      specAccepted: number | undefined;
+      specDrafted: number | undefined;
+      specDrafts: number | undefined;
+    }[]
   >();
 
   /*
@@ -618,7 +636,16 @@ export class NodeCollector extends EventEmitter {
        * the engine itself reports.
        */
       const tokens = this.tokenWindow.get(key) ?? [];
-      tokens.push({ t: ts, gen, prompt, finished });
+      tokens.push({
+        t: ts,
+        gen,
+        prompt,
+        finished,
+        cached: reading.cachedPromptTokensTotal,
+        specAccepted: reading.specAcceptedTotal,
+        specDrafted: reading.specDraftedTotal,
+        specDrafts: reading.specDraftsTotal,
+      });
       while (tokens.length > 1 && ts - tokens[0]!.t > THROUGHPUT_WINDOW_MS) tokens.shift();
       this.tokenWindow.set(key, tokens);
       const base = tokens.length > 1 ? tokens[0]! : undefined;
@@ -631,6 +658,26 @@ export class NodeCollector extends EventEmitter {
         if (dt <= 0 || now < before) return null;
         return Math.round(((now - before) / dt) * 10) / 10;
       };
+
+      /**
+       * A ratio of two counters over the window, falling back to their lifetime
+       * ratio when nothing moved. Both counters must have advanced for the
+       * windowed form to mean anything — a zero denominator is idleness, not a
+       * rate of zero.
+       */
+      const ratio = (
+        numKey: "cached" | "specAccepted",
+        denKey: "prompt" | "specDrafted" | "specDrafts",
+        nowNum: number | undefined,
+        nowDen: number | undefined
+      ): number | null => counterIntervalRatio(base?.[numKey], base?.[denKey], nowNum, nowDen);
+      const round = (v: number | null, dp: number): number | null =>
+        v === null ? null : Math.round(v * 10 ** dp) / 10 ** dp;
+      const pct = (v: number | null) => (v === null ? null : v * 100);
+
+      const acceptRatio = ratio("specAccepted", "specDrafted", reading.specAcceptedTotal, reading.specDraftedTotal);
+      const acceptedPerDraft = ratio("specAccepted", "specDrafts", reading.specAcceptedTotal, reading.specDraftsTotal);
+      const cacheRatio = ratio("cached", "prompt", reading.cachedPromptTokensTotal, reading.promptTokensTotal);
 
       const genRate = rate(base?.gen, gen, base?.t) ?? rate(prev?.gen.value, gen, prev?.gen.t);
       const promptRate = rate(base?.prompt, prompt, base?.t) ?? rate(prev?.prompt.value, prompt, prev?.prompt.t);
@@ -651,9 +698,18 @@ export class NodeCollector extends EventEmitter {
       this.latencyWindow.set(key, window);
       const oldest = window.length > 1 ? window[0] : undefined;
 
+      /*
+       * Track which source each figure came from. A lifetime mean looks exactly
+       * like a live one once it reaches the UI, so the consumer is told the
+       * difference rather than left to infer it from a decode rate of zero.
+       */
+      let sawWindowed = false;
+      let sawLifetime = false;
       const latencyMs = (k: LatencyKey): number | null => {
         const windowed = histogramIntervalMean(oldest?.latency?.[k], reading.latency[k]);
         const value = windowed ?? histogramLifetimeMean(reading.latency[k]);
+        if (windowed !== null) sawWindowed = true;
+        else if (value !== null) sawLifetime = true;
         return value === null ? null : Math.round(value * 1000 * 10) / 10;
       };
       const ttftMs = latencyMs("ttft");
@@ -707,19 +763,12 @@ export class NodeCollector extends EventEmitter {
         requestsPerMin: finishedRate === null ? null : Math.round(finishedRate * 600) / 10,
         cachedPromptTokensTotal: reading.cachedPromptTokensTotal ?? null,
         // Acceptance rate is what governs the speed-up; mean acceptance length
-        // is how many tokens each model step actually yields.
-        specAcceptanceRatePct:
-          reading.specDraftedTotal && reading.specAcceptedTotal !== undefined && reading.specDraftedTotal > 0
-            ? Math.round((reading.specAcceptedTotal / reading.specDraftedTotal) * 1000) / 10
-            : null,
-        specMeanAcceptedLength:
-          reading.specDraftsTotal && reading.specAcceptedTotal !== undefined && reading.specDraftsTotal > 0
-            ? Math.round((reading.specAcceptedTotal / reading.specDraftsTotal) * 100) / 100
-            : null,
-        promptCacheHitPct:
-          reading.promptTokensTotal && reading.cachedPromptTokensTotal !== undefined && reading.promptTokensTotal > 0
-            ? Math.round((reading.cachedPromptTokensTotal / reading.promptTokensTotal) * 1000) / 10
-            : null,
+        // is how many tokens each model step actually yields. The +1 counts the
+        // token the target model produces itself, which is never drafted.
+        specAcceptanceRatePct: round(pct(acceptRatio), 1),
+        specMeanAcceptedLength: round(acceptedPerDraft === null ? null : acceptedPerDraft + 1, 2),
+        promptCacheHitPct: round(pct(cacheRatio), 1),
+        latencyBasis: sawWindowed ? "window" : sawLifetime ? "lifetime" : null,
         ttftMs,
         interTokenLatencyMs: interTokenMs,
         // Per-request decode speed, which is what one user experiences —
@@ -1078,6 +1127,7 @@ function emptyEndpoint(nodeId: string, nodeLabel: string, port: number): Inferen
     ttftMs: null,
     interTokenLatencyMs: null,
     perRequestDecodeTokensPerSec: null,
+    latencyBasis: null,
     e2eLatencyMs: null,
     queueLatencyMs: null,
     prefillMs: null,

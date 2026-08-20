@@ -114,17 +114,25 @@ function Latency({
   ms,
   hint,
   extra,
+  stale = false,
 }: {
   label: string;
   ms: number | null;
   hint: string;
   extra?: string;
+  /** Value is the server's lifetime average, not a reading from this minute. */
+  stale?: boolean;
 }) {
   const shown = ms === null ? "—" : ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${ms.toFixed(0)}ms`;
   return (
-    <div className="min-w-0 cursor-help" title={hint}>
+    <div
+      className="min-w-0 cursor-help"
+      title={stale ? `${hint} — lifetime average; nothing completed in the last minute` : hint}
+    >
       <div className="truncate text-ink-muted">{label}</div>
-      <div className="tnum truncate font-medium text-ink">
+      {/* A lifetime average is rendered in muted ink so it cannot be mistaken
+          for a live reading — the number is real, but it is not from now. */}
+      <div className={`tnum truncate font-medium ${stale ? "text-ink-muted" : "text-ink"}`}>
         {shown}
         {extra && <span className="ml-1 font-normal text-ink-muted">{extra}</span>}
       </div>
@@ -146,6 +154,7 @@ function EndpointRow({ e }: { e: InferenceEndpoint }) {
     );
   }
 
+  const stale = e.latencyBasis === "lifetime";
   return (
     <li className="px-4 py-2.5">
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
@@ -194,24 +203,32 @@ function EndpointRow({ e }: { e: InferenceEndpoint }) {
         )}
       </div>
 
-      {/* Latency, averaged over the last interval rather than the server's
-          lifetime. A dash means nothing completed in that window. */}
-      <div className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] sm:grid-cols-4">
-        <Latency label="TTFT" ms={e.ttftMs} hint="Time to first token" />
+      {/* Latency over requests completing in the last minute. When none did,
+          these fall back to the server's lifetime average and are marked as
+          such — otherwise a stale mean beside a decode rate of zero reads as a
+          current measurement. */}
+      {stale && (
+        <div className="mt-1.5 text-[10px] uppercase tracking-wide text-ink-muted">
+          Latency · lifetime avg (idle)
+        </div>
+      )}
+      <div className={`grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] sm:grid-cols-4 ${stale ? "mt-0.5" : "mt-1.5"}`}>
+        <Latency label="TTFT" ms={e.ttftMs} hint="Time to first token" stale={stale} />
         <Latency
           label="Per-token"
           ms={e.interTokenLatencyMs}
           hint="Inter-token latency during decode"
           extra={e.perRequestDecodeTokensPerSec !== null ? `${e.perRequestDecodeTokensPerSec}/s per req` : undefined}
+          stale={stale}
         />
-        <Latency label="Queue" ms={e.queueLatencyMs} hint="Waiting before work began" />
-        <Latency label="End to end" ms={e.e2eLatencyMs} hint="Full request latency" />
+        <Latency label="Queue" ms={e.queueLatencyMs} hint="Waiting before work began" stale={stale} />
+        <Latency label="End to end" ms={e.e2eLatencyMs} hint="Full request latency" stale={stale} />
       </div>
 
       {(e.prefillMs !== null || e.decodeMs !== null) && (
         <div className="mt-1 grid grid-cols-2 gap-x-4 text-[11px] sm:grid-cols-4">
-          <Latency label="Prefill" ms={e.prefillMs} hint="Prefill phase, per request" />
-          <Latency label="Decode" ms={e.decodeMs} hint="Decode phase, per request" />
+          <Latency label="Prefill" ms={e.prefillMs} hint="Prefill phase, per request" stale={stale} />
+          <Latency label="Decode" ms={e.decodeMs} hint="Decode phase, per request" stale={stale} />
         </div>
       )}
 

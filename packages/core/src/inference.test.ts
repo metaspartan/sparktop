@@ -7,6 +7,7 @@
 
 import { describe, expect, test } from "bun:test";
 import {
+  counterIntervalRatio,
   detectEngine,
   histogramIntervalMean,
   histogramLifetimeMean,
@@ -166,5 +167,42 @@ vllm:prompt_tokens_cached_total{model_name="m"} 6.9694976e+07`;
 
   test("leaves latency empty for an engine that exposes none", () => {
     expect(readMetrics("llamacpp:requests_processing 1")!.latency).toEqual({});
+  });
+});
+
+describe("counter interval ratios", () => {
+  test("uses the window, not the lifetime totals", () => {
+    // Lifetime says 90% accepted; the last window says 50%. A long-running
+    // server must report what is happening now, not its whole history.
+    expect(counterIntervalRatio(9000, 10000, 9100, 10200)).toBeCloseTo(0.5, 6);
+  });
+
+  test("falls back to the lifetime ratio without a baseline", () => {
+    expect(counterIntervalRatio(undefined, undefined, 9000, 10000)).toBeCloseTo(0.9, 6);
+  });
+
+  test("falls back when the denominator has not advanced", () => {
+    // An idle window carries no information, so the lifetime ratio stands in
+    // rather than a division by zero.
+    expect(counterIntervalRatio(9000, 10000, 9000, 10000)).toBeCloseTo(0.9, 6);
+  });
+
+  test("falls back when a counter goes backwards", () => {
+    // Restarted server: the new totals are the only truthful reading.
+    expect(counterIntervalRatio(9000, 10000, 5, 10)).toBeCloseTo(0.5, 6);
+  });
+
+  test("is null when nothing was ever measured", () => {
+    expect(counterIntervalRatio(undefined, undefined, 0, 0)).toBeNull();
+    expect(counterIntervalRatio(undefined, undefined, undefined, 10)).toBeNull();
+  });
+
+  test("mean accepted length counts the target model's bonus token", () => {
+    // 300 accepted drafts over 200 steps is 1.5 per step, plus the token the
+    // target model emits itself on every step.
+    const perDraft = counterIntervalRatio(0, 0, 300, 200)!;
+    expect(perDraft + 1).toBeCloseTo(2.5, 6);
+    // It can never sit below 1, even when every draft is rejected.
+    expect(counterIntervalRatio(0, 0, 0, 200)! + 1).toBe(1);
   });
 });

@@ -336,6 +336,34 @@ function readHistogram(samples: Map<string, PromSample[]>, names: string[]): His
 }
 
 /**
+ * Ratio of two monotonic counters over the interval between two scrapes.
+ *
+ * The same reasoning as `histogramIntervalMean`, applied to the derived ratios:
+ * speculative acceptance and prefix cache hit rate are both "numerator counter
+ * over denominator counter", and taking them as lifetime totals gives an average
+ * over every request since boot, which on a long-lived server is dominated by
+ * history.
+ *
+ * Falls back to the lifetime ratio when the window carries no information — no
+ * baseline yet, or a denominator that has not advanced. A counter that went
+ * backwards means the server restarted, which also forces the fallback.
+ * Returns null when the denominator is zero in both forms, since nothing has
+ * ever been measured.
+ */
+export function counterIntervalRatio(
+  baseNum: number | undefined,
+  baseDen: number | undefined,
+  nowNum: number | undefined,
+  nowDen: number | undefined
+): number | null {
+  if (nowNum === undefined || nowDen === undefined) return null;
+  if (baseNum !== undefined && baseDen !== undefined && nowNum >= baseNum && nowDen > baseDen) {
+    return (nowNum - baseNum) / (nowDen - baseDen);
+  }
+  return nowDen > 0 ? nowNum / nowDen : null;
+}
+
+/**
  * Mean of a histogram over the interval between two scrapes.
  *
  * `(sum_now - sum_before) / (count_now - count_before)`. Dividing the raw
