@@ -192,7 +192,7 @@ function SummaryStrip({ snap }: { snap: ClusterSnapshot }) {
     {
       label: "Fabric",
       value: fmtGbps(snap.fabric.totalTrafficGbps),
-      sub: `${snap.fabric.links.length} links`,
+      sub: `of ${snap.fabric.totalCapacityGbps.toFixed(0)} Gbps`,
       pct: pctOf(snap.fabric.totalTrafficGbps, snap.fabric.totalCapacityGbps),
       tone: "series-3",
     },

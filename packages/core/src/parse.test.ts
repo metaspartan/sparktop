@@ -26,6 +26,8 @@ import {
   parseIpAddr,
   parseMeminfo,
   parseNetDev,
+  parseFabricPcie,
+  pcieThroughputGbps,
   parseRateGbps,
   splitSections,
 } from "./parse.ts";
@@ -268,5 +270,37 @@ describe("docker", () => {
     ];
     applyDockerEnv(containers, ["abc", "NCCL_IB_DISABLE=1"].join(US));
     expect(containers[0]!.distributed!.ncclIbDisabled).toBe(true);
+  });
+});
+
+describe("PCIe throughput", () => {
+  test("derives the usable rate of a Gen5 x4 link", () => {
+    // The link behind each GB10 ConnectX-7 port. ~100 Gb/s is both what NVIDIA
+    // implies (200 aggregate across two ports) and what ib_write_bw measures.
+    expect(pcieThroughputGbps("32.0 GT/s PCIe", "4")).toBeCloseTo(100.8, 1);
+  });
+
+  test("scales with lanes and generation", () => {
+    expect(pcieThroughputGbps("32.0 GT/s PCIe", "8")).toBeCloseTo(201.6, 1);
+    expect(pcieThroughputGbps("16.0 GT/s PCIe", "16")).toBeCloseTo(201.6, 1);
+  });
+
+  test("uses 8b/10b encoding below Gen3", () => {
+    // 5 GT/s x4 x0.8 encoding x0.8 protocol = 12.8
+    expect(pcieThroughputGbps("5.0 GT/s PCIe", "4")).toBeCloseTo(12.8, 1);
+  });
+
+  test("returns null when sysfs reports nothing usable", () => {
+    expect(pcieThroughputGbps(undefined, "4")).toBeNull();
+    expect(pcieThroughputGbps("Unknown", "4")).toBeNull();
+    expect(pcieThroughputGbps("32.0 GT/s PCIe", "")).toBeNull();
+  });
+
+  test("reads speed and width out of the bulk sysfs grep", () => {
+    const m = parseFabricPcie(
+      "/sys/class/infiniband/rocep1s0f1/device/current_link_speed:32.0 GT/s PCIe\n" +
+        "/sys/class/infiniband/rocep1s0f1/device/current_link_width:4"
+    );
+    expect(m.get("rocep1s0f1")).toEqual({ speed: "32.0 GT/s PCIe", width: "4" });
   });
 });

@@ -714,3 +714,48 @@ export function parseInferenceScrapes(
   flush();
   return out.filter((e) => e.port > 0);
 }
+
+// ---------------------------------------------------------------------------
+// PCIe geometry
+// ---------------------------------------------------------------------------
+
+/**
+ * Usable throughput of a PCIe link, in Gb/s.
+ *
+ * Three factors, applied in order:
+ *
+ *  - Raw signalling: `GT/s x lanes`.
+ *  - Line encoding: 8b/10b below Gen3 (80%), 128b/130b from Gen3 (98.5%).
+ *  - Protocol overhead: TLP headers, ACKs and flow-control credits cost roughly
+ *    20% at realistic payload sizes.
+ *
+ * For the Gen5 x4 link behind each GB10 ConnectX-7 port this yields ~100 Gb/s,
+ * which is what the hardware actually achieves — NVIDIA quotes 200 Gb/s as the
+ * *aggregate* across the unit's two ports, and measured ib_write_bw on a single
+ * port lands near 98 Gb/s.
+ */
+export function pcieThroughputGbps(speed: string | undefined, width: string | undefined): number | null {
+  if (!speed || !width) return null;
+  const gts = Number(/([\d.]+)\s*GT\/s/.exec(speed)?.[1] ?? NaN);
+  const lanes = Number(String(width).trim().replace(/^x/i, ""));
+  if (!Number.isFinite(gts) || !Number.isFinite(lanes) || gts <= 0 || lanes <= 0) return null;
+  const encoding = gts >= 8 ? 128 / 130 : 0.8;
+  const TLP_EFFICIENCY = 0.8;
+  return Math.round(gts * lanes * encoding * TLP_EFFICIENCY * 10) / 10;
+}
+
+/** `/sys/class/infiniband/<dev>/device/<file>` values, keyed by device. */
+export function parseFabricPcie(
+  body: string | undefined
+): Map<string, { speed?: string; width?: string }> {
+  const out = new Map<string, { speed?: string; width?: string }>();
+  for (const [path, value] of parseGrepH(body)) {
+    const m = /^\/sys\/class\/infiniband\/([^/]+)\/device\/(current_link_speed|current_link_width)$/.exec(path);
+    if (!m?.[1] || !m[2]) continue;
+    const entry = out.get(m[1]) ?? {};
+    if (m[2] === "current_link_speed") entry.speed = value.trim();
+    else entry.width = value.trim();
+    out.set(m[1], entry);
+  }
+  return out;
+}

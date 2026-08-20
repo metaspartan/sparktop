@@ -211,10 +211,23 @@ export interface FabricPort {
   state: string;
   physState: string;
   linkUp: boolean;
-  /** Negotiated rate for this single port, Gb/s. */
+  /**
+   * Signalling rate the RDMA subsystem reports for this port, Gb/s.
+   *
+   * Not the same as achievable throughput. A GB10 advertises 200 Gb/sec here
+   * while the port sits behind a PCIe Gen5 x4 link that cannot carry half of
+   * it — use `effectiveRateGbps` for anything the operator will read as
+   * capacity.
+   */
   rateGbps: number;
   /** Human label from the RDMA subsystem, e.g. "200 Gb/sec (2X NDR)". */
   rateLabel: string;
+  /** Usable throughput of the PCIe link behind this NIC, Gb/s. */
+  pcieCeilingGbps: number | null;
+  /** The lower of the port rate and the PCIe ceiling: what this port can do. */
+  effectiveRateGbps: number;
+  /** True when PCIe, not the wire, is the binding constraint. */
+  pcieLimited: boolean;
   addresses: string[];
   /** IPv4 /24-style network key used to pair ports across nodes. */
   subnet: string | null;
@@ -372,8 +385,15 @@ export interface FabricLink {
   a: FabricLinkEndpoint;
   b: FabricLinkEndpoint;
   subnet: string;
-  /** Per-direction line rate, Gb/s. */
+  /**
+   * Per-direction capability of this link, Gb/s — the lower of what the two
+   * ports can each actually move, not what they advertise.
+   */
   rateGbps: number;
+  /** Signalling rate advertised by the ports, kept for reference. */
+  signalledRateGbps: number;
+  /** True when PCIe limits this link below its advertised rate. */
+  pcieLimited: boolean;
   up: boolean;
   aToBGbps: number;
   bToAGbps: number;
@@ -433,9 +453,16 @@ export interface FabricSegment {
 export interface FabricSummary {
   links: FabricLink[];
   segments: FabricSegment[];
-  /** Sum of all up links' bidirectional capacity, Gb/s. */
+  /**
+   * Usable one-way capacity across every live link, Gb/s.
+   *
+   * One direction, not both summed, and derived from what the hardware can
+   * actually move rather than what it advertises — so a pair of Sparks reads
+   * ~200 Gb/s, matching NVIDIA's aggregate figure for the unit, instead of the
+   * 800 that port rates and duplex doubling would suggest.
+   */
   totalCapacityGbps: number;
-  /** Sum of current traffic across all links, Gb/s. */
+  /** Busiest direction summed across links, Gb/s — comparable to capacity. */
   totalTrafficGbps: number;
   /** Number of ports that are up but carrying no traffic. */
   idlePorts: number;

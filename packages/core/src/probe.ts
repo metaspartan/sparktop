@@ -62,10 +62,24 @@ const FABRIC_HW_COUNTERS = [
 ];
 
 const IB = "/sys/class/infiniband/*/ports/*";
+/*
+ * PCIe link geometry behind each RDMA device.
+ *
+ * Load-bearing for capacity, not decoration. A GB10 reports 200 Gb/sec as the
+ * port's signalling rate while sitting behind a PCIe Gen5 x4 link, which cannot
+ * carry anywhere near that — so believing the port rate overstates the fabric
+ * by roughly 2x per port. These are plain sysfs reads, not firmware traps, so
+ * they are cheap enough for the fast tier.
+ */
+const PCIE_PATHS = ["current_link_speed", "current_link_width"].map(
+  (f) => `/sys/class/infiniband/*/device/${f}`
+);
+
 const FABRIC_PATHS = [
   ...FABRIC_PORT_FILES.map((f) => `${IB}/${f}`),
   ...FABRIC_COUNTERS.map((f) => `${IB}/counters/${f}`),
   ...FABRIC_HW_COUNTERS.map((f) => `${IB}/hw_counters/${f}`),
+  ...PCIE_PATHS,
 ].join(" ");
 
 /**

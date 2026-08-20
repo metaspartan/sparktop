@@ -29,7 +29,7 @@ export function FabricView({ snap, history, themeKey }: Props) {
         title="Interconnect topology"
         right={
           <span className="text-[11px] text-ink-muted">
-            {fmtGbps(snap.fabric.totalTrafficGbps)} of {snap.fabric.totalCapacityGbps} Gbps capacity
+            {fmtGbps(snap.fabric.totalTrafficGbps)} of {snap.fabric.totalCapacityGbps.toFixed(0)} Gbps usable
           </span>
         }
       >
@@ -202,7 +202,7 @@ function Topology({ snap }: { snap: ClusterSnapshot }) {
               textAnchor="middle"
               style={{ fontSize: 9.5, fill: "var(--text-muted)" }}
             >
-              {l.rateGbps}G · {l.a.netdev}
+              {l.rateGbps.toFixed(0)}G · {l.a.netdev}
             </text>
           </g>
         );
@@ -374,7 +374,17 @@ function LinkTable({ links }: { links: FabricLink[] }) {
                   {l.b.netdev} · {l.b.address ?? "-"}
                 </div>
               </td>
-              <td className="tnum px-3 py-2.5 text-ink-secondary">{l.rateGbps} Gbps</td>
+              <td className="tnum px-3 py-2.5 text-ink-secondary">
+                {l.rateGbps.toFixed(0)} Gbps
+                {l.pcieLimited && (
+                  <span
+                    className="ml-1 cursor-help text-ink-muted"
+                    title={`Ports advertise ${l.signalledRateGbps} Gbps, but each sits behind a PCIe link that carries about ${l.rateGbps.toFixed(0)} Gbps. The lower figure is the real ceiling.`}
+                  >
+                    ⓘ
+                  </span>
+                )}
+              </td>
               <td className="tnum px-3 py-2.5 font-medium text-ink">{fmtGbps(l.aToBGbps)}</td>
               <td className="tnum px-3 py-2.5 font-medium text-ink">{fmtGbps(l.bToAGbps)}</td>
               <td className="px-3 py-2.5">

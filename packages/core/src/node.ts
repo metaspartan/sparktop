@@ -45,6 +45,8 @@ import {
   parseFabricHwmon,
   parseFabricMap,
   parseFabricSys,
+  parseFabricPcie,
+  pcieThroughputGbps,
   parseGpuGraphics,
   parseGpuProcs,
   parseGpuQuery,
@@ -458,12 +460,13 @@ export class NodeCollector extends EventEmitter {
     const fabricMap = parseFabricMap(s.fabricmap);
     const fabricHwmon = parseFabricHwmon(s.fabrichwmon);
     const fabricSys = parseFabricSys(s.fabricsys);
+    const fabricPcie = parseFabricPcie(s.fabricsys);
     const ethtool = parseEthtool(s.ethtool);
     const carrier = parseCarrier(s.carrier);
 
     const fabricNetdevs = new Set(fabricMap.values());
     const ports = this.buildFabricPorts(
-      { fabricMap, fabricHwmon, fabricSys, ethtool, netCounters, sensors },
+      { fabricMap, fabricHwmon, fabricSys, fabricPcie, ethtool, netCounters, sensors },
       counterTs
     );
     const interfaces = this.buildInterfaces(netCounters, carrier, fabricNetdevs, counterTs);
@@ -702,6 +705,7 @@ export class NodeCollector extends EventEmitter {
       fabricMap: Map<string, string>;
       fabricHwmon: Map<string, string>;
       fabricSys: Map<string, ReturnType<typeof parseFabricSys> extends Map<string, infer V> ? V : never>;
+      fabricPcie: Map<string, { speed?: string; width?: string }>;
       ethtool: Map<string, Map<string, number>>;
       netCounters: Map<string, { rxBytes: number; txBytes: number }>;
       sensors: ThermalSensor[];
@@ -746,7 +750,17 @@ export class NodeCollector extends EventEmitter {
       });
 
       const rateGbps = parseRateGbps(sys?.rate ?? "");
-      const capacityBps = (rateGbps * 1e9) / 8;
+      /*
+       * What this port can actually move.
+       *
+       * The advertised rate is the wire signalling rate; the NIC still has to
+       * get the data across PCIe. On a GB10 that is a Gen5 x4 link behind a
+       * port claiming 200 Gb/sec, so the smaller of the two is the honest
+       * number and the one utilisation is measured against.
+       */
+      const pcie = fabricPcieFor(src.fabricPcie, ibdev);
+      const effectiveRateGbps = pcie !== null && pcie < rateGbps ? pcie : rateGbps;
+      const capacityBps = (effectiveRateGbps * 1e9) / 8;
       const util = (bps: number) => (capacityBps > 0 ? clampPct((bps / capacityBps) * 100) : 0);
 
       const errors = buildErrors(sys);
@@ -772,6 +786,9 @@ export class NodeCollector extends EventEmitter {
         linkUp: state.toUpperCase() === "ACTIVE",
         rateGbps,
         rateLabel: sys?.rate ?? "",
+        pcieCeilingGbps: pcie,
+        effectiveRateGbps,
+        pcieLimited: pcie !== null && pcie < rateGbps,
         addresses,
         subnet: subnetOf(addresses[0]),
         rdmaRxBytes: rdmaRx,
@@ -894,6 +911,15 @@ function buildErrors(sys: { counters: Map<string, number>; hwCounters: Map<strin
     e.rnrNakRetryErr +
     e.reqTransportRetriesExceeded;
   return e;
+}
+
+/** Usable PCIe throughput behind an RDMA device, or null if unreported. */
+function fabricPcieFor(
+  pcie: Map<string, { speed?: string; width?: string }>,
+  ibdev: string
+): number | null {
+  const e = pcie.get(ibdev);
+  return e ? pcieThroughputGbps(e.speed, e.width) : null;
 }
 
 /** "10.100.232.1/24" -> "10.100.232.0/24". Used to pair ports across nodes. */

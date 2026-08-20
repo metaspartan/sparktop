@@ -246,7 +246,17 @@ function buildLink(subnet: string, a: PortRef, b: PortRef): FabricLink {
   const bToA = Math.max(bTx, aRx) * BYTES_TO_GBPS;
   const confirmed = agrees(aTx, bRx) && agrees(bTx, aRx);
 
-  const rateGbps = Math.min(a.port.rateGbps || 0, b.port.rateGbps || 0) || a.port.rateGbps || b.port.rateGbps;
+  /*
+   * A link runs at the pace of its slower end, and each end is capped by what
+   * its NIC can push across PCIe rather than by the rate it advertises. Using
+   * the advertised rate here is what made a Spark pair read as 800 Gb/s of
+   * capacity when the hardware tops out near 200.
+   */
+  const effA = a.port.effectiveRateGbps || a.port.rateGbps || 0;
+  const effB = b.port.effectiveRateGbps || b.port.rateGbps || 0;
+  const rateGbps = Math.min(effA, effB) || effA || effB;
+  const signalledRateGbps =
+    Math.min(a.port.rateGbps || 0, b.port.rateGbps || 0) || a.port.rateGbps || b.port.rateGbps;
   const utilPct = rateGbps > 0 ? Math.min(100, Math.round((Math.max(aToB, bToA) / rateGbps) * 1000) / 10) : 0;
 
   return {
@@ -267,6 +277,8 @@ function buildLink(subnet: string, a: PortRef, b: PortRef): FabricLink {
     },
     subnet,
     rateGbps,
+    signalledRateGbps,
+    pcieLimited: a.port.pcieLimited || b.port.pcieLimited,
     up: a.port.linkUp && b.port.linkUp,
     aToBGbps: round2(aToB),
     bToAGbps: round2(bToA),
@@ -296,8 +308,17 @@ function summarizeFabric(
   let totalTrafficGbps = 0;
   for (const l of links) {
     if (!l.up) continue;
-    totalCapacityGbps += l.rateGbps * 2; // full duplex
-    totalTrafficGbps += l.aToBGbps + l.bToAGbps;
+    /*
+     * One direction, not both summed.
+     *
+     * Doubling for duplex and using the advertised port rate together
+     * overstated a Spark pair by 4x — 800 Gb/s against hardware that peaks near
+     * 200. Capacity is now the usable one-way rate, and traffic is the busier
+     * direction, so the two are directly comparable and "X of Y" means
+     * something.
+     */
+    totalCapacityGbps += l.rateGbps;
+    totalTrafficGbps += Math.max(l.aToBGbps, l.bToAGbps);
   }
   let idlePorts = 0;
   let totalFaults = 0;

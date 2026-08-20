@@ -13,6 +13,16 @@ import { fmtBps, fmtBytes, fmtDuration, fmtGbps, shortImage } from "./format.ts"
 import type { DockerContainer, FabricPort, NodeSnapshot } from "./types.ts";
 
 function port(over: Partial<FabricPort> = {}): FabricPort {
+  const base = buildPort(over);
+  // Derive the effective rate from whatever rate the test asked for, unless the
+  // test set it explicitly — otherwise overriding rateGbps silently has no
+  // effect on anything that reads capacity.
+  const pcie = base.pcieCeilingGbps;
+  const effective = over.effectiveRateGbps ?? (pcie !== null ? Math.min(base.rateGbps, pcie) : base.rateGbps);
+  return { ...base, effectiveRateGbps: effective, pcieLimited: pcie !== null && pcie < base.rateGbps };
+}
+
+function buildPort(over: Partial<FabricPort> = {}): FabricPort {
   return {
     netdev: "enp1s0f1np1",
     ibdev: "rocep1s0f1",
@@ -22,6 +32,9 @@ function port(over: Partial<FabricPort> = {}): FabricPort {
     linkUp: true,
     rateGbps: 200,
     rateLabel: "200 Gb/sec (2X NDR)",
+    pcieCeilingGbps: 100.8,
+    effectiveRateGbps: 100.8,
+    pcieLimited: true,
     addresses: ["10.100.232.1/24"],
     subnet: "10.100.232.0/24",
     rdmaRxBytes: 0,
@@ -76,7 +89,35 @@ describe("fabric pairing", () => {
     expect(links).toHaveLength(1);
     expect(links[0]!.a.nodeId).toBe("a");
     expect(links[0]!.b.nodeId).toBe("b");
-    expect(links[0]!.rateGbps).toBe(200);
+    // The ports advertise 200, but a Gen5 x4 link cannot carry it.
+    expect(links[0]!.rateGbps).toBeCloseTo(100.8, 1);
+    expect(links[0]!.signalledRateGbps).toBe(200);
+    expect(links[0]!.pcieLimited).toBe(true);
+  });
+
+  test("capacity reflects what the hardware can move, not what it advertises", () => {
+    // Two links between a pair of Sparks: 2 x ~100 Gb/s usable, one direction.
+    const a = node("a", [
+      port(),
+      port({ netdev: "p2", ibdev: "ib2", addresses: ["10.100.233.1/24"], subnet: "10.100.233.0/24" }),
+    ]);
+    const b = node("b", [
+      port({ addresses: ["10.100.232.2/24"] }),
+      port({ netdev: "p2", ibdev: "ib2", addresses: ["10.100.233.2/24"], subnet: "10.100.233.0/24" }),
+    ]);
+    const f = buildClusterSnapshot([a, b]).fabric;
+    // Not 800: that is 2 links x 200 advertised x 2 for duplex, and wrong twice.
+    expect(f.totalCapacityGbps).toBeCloseTo(201.6, 1);
+  });
+
+  test("uses the port rate when PCIe is not the constraint", () => {
+    // A 25G port behind a Gen5 x4 link is limited by the wire, not the bus.
+    const slow = { rateGbps: 25, pcieCeilingGbps: 100.8 };
+    const a = node("a", [port(slow)]);
+    const b = node("b", [port({ ...slow, addresses: ["10.100.232.2/24"] })]);
+    const l = pairFabricPorts([a, b]).links[0]!;
+    expect(l.rateGbps).toBe(25);
+    expect(l.pcieLimited).toBe(false);
   });
 
   test("does not pair two ports on the same node", () => {
