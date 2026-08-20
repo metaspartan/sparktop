@@ -216,17 +216,38 @@ describe("warnings", () => {
     expect(snap.warnings.some((w) => /segment/i.test(w.title))).toBe(false);
   });
 
+  test("scores each sensor against its own limit, not a global threshold", () => {
+    // A ConnectX-7 ASIC at 95C is well inside its 105C limit; an NVMe at 82C is
+    // not, against 85C. Only the drive should raise anything.
+    const sensors = [
+      { id: "nic", label: "mlx5 asic", kind: "nic" as const, tempC: 95, critC: 105 },
+      { id: "ssd", label: "nvme Composite", kind: "nvme" as const, tempC: 82, critC: 85 },
+    ];
+    const w = buildClusterSnapshot([node("a", [], { thermal: { sensors, maxC: 95 } })]).warnings;
+    const hot = w.find((x) => x.id.startsWith("temp-"));
+    expect(hot).toBeDefined();
+    expect(hot!.detail).toContain("nvme Composite");
+    expect(hot!.detail).not.toContain("mlx5");
+  });
+
+  test("stays quiet when a hot-running sensor is inside its own limit", () => {
+    const sensors = [{ id: "nic", label: "mlx5 asic", kind: "nic" as const, tempC: 95, critC: 105 }];
+    const w = buildClusterSnapshot([node("a", [], { thermal: { sensors, maxC: 95 } })]).warnings;
+    expect(w.some((x) => x.id.startsWith("temp-"))).toBe(false);
+  });
+
   test("applies hysteresis so a borderline sensor does not flap", () => {
     const st = newAnalysisState();
-    const hot = (c: number) => node("a", [], { thermal: { sensors: [], maxC: c } });
-    // Below the raise threshold: silent.
-    expect(buildClusterSnapshot([hot(88)], st).warnings.some((w) => w.id.startsWith("temp-"))).toBe(false);
-    // Crosses the raise threshold.
-    expect(buildClusterSnapshot([hot(91)], st).warnings.some((w) => w.id.startsWith("temp-"))).toBe(true);
-    // Drops back a little: stays raised rather than toggling off.
-    expect(buildClusterSnapshot([hot(88)], st).warnings.some((w) => w.id.startsWith("temp-"))).toBe(true);
-    // Clearly recovered: clears.
-    expect(buildClusterSnapshot([hot(80)], st).warnings.some((w) => w.id.startsWith("temp-"))).toBe(false);
+    // No critC, so the soc fallback limit of 100C applies.
+    const hot = (c: number) =>
+      node("a", [], { thermal: { sensors: [{ id: "s", label: "acpitz", kind: "soc" as const, tempC: c }], maxC: c } });
+    const raised = (c: number) =>
+      buildClusterSnapshot([hot(c)], st).warnings.some((w) => w.id.startsWith("temp-"));
+    // Raise at 92% of the limit, clear below 89%.
+    expect(raised(88)).toBe(false); // below the raise threshold
+    expect(raised(93)).toBe(true); // crosses it
+    expect(raised(90)).toBe(true); // drops back a little, stays raised
+    expect(raised(80)).toBe(false); // clearly recovered
   });
 
   test("does not treat an idle redundant link as a problem", () => {

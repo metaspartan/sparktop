@@ -8,5 +8,6 @@ export * from "./config.ts";
 export * from "./node.ts";
 export * from "./cluster.ts";
 export * from "./probeConnection.ts";
+export * from "./control.ts";
 export * from "./format.ts";
 export * from "./history.ts";

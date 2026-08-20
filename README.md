@@ -189,6 +189,68 @@ Rates come from monotonic counters divided by measured wall time, not by the nom
 - **Heterogeneous CPU.** `lscpu` reports several models for the Cortex-X925 / A725 clusters; all are shown.
 - **NIC temperatures** are attributed to the right port through `/sys/class/infiniband/<dev>/device/hwmon`, since a Spark exposes four identically named `mlx5` chips.
 
+## Inference monitoring
+
+sparktop finds the inference server on each node and reports tokens/sec,
+requests in flight, queue depth, requests served and KV cache pressure. It is
+not told what is running: every locally-bound port is probed and identified from
+what it answers with.
+
+| Engine | Detected by |
+|---|---|
+| vLLM | `vllm:` metrics |
+| SGLang | `sglang:` metrics |
+| llama.cpp | `llamacpp:` metrics |
+| TGI | `tgi_` metrics |
+| Triton / TensorRT-LLM | `nv_inference_` metrics |
+| Ollama | `/api/ps` |
+| Anything OpenAI-compatible | `/v1/models` |
+
+Probing runs on the node, because these servers usually bind `127.0.0.1` where
+the sparktop host cannot reach them. Discovery happens in the slow tier and the
+fast probe is then rebuilt to scrape only the ports found, with the response
+filtered node-side to the engine's own metric families — a vLLM body is ~32KB
+and most of it is Python instrumentation nobody reads.
+
+Token rates come from cumulative counters divided by measured wall time. Where
+one logical server is reachable twice (behind a proxy, or on two ports) the
+duplicate is folded out of cluster totals, so a tensor-parallel job — where only
+rank 0 serves an API — is not double counted.
+
+## Controls
+
+Container lifecycle and image swapping, **disabled by default**:
+
+```bash
+SPARKTOP_ENABLE_CONTROL=1 bun run start
+```
+
+The dashboard is unauthenticated by default. That is reasonable for reading
+metrics and not for stopping containers, so the capability is opt-in rather than
+merely confirm-on-click. Set `SPARKTOP_TOKEN` as well if the dashboard is
+reachable by anyone you would not hand a shell.
+
+What it does:
+
+- **Start / stop / restart** a container, with a configurable stop timeout so a
+  graceful shutdown is not turned into a kill.
+- **Change image.** Pick from the images already on the node or name any
+  reference to pull.
+
+Nothing destructive happens on one click. Every action produces the exact
+commands first and requires a second confirmation. Container names and image
+references are validated against strict patterns before they reach a command
+line — they are never escaped and interpolated.
+
+Image swaps respect docker compose. Where compose owns a container, sparktop
+recreates the service through compose with a generated override rather than
+by hand, because a manual recreate leaves compose's view stale and the next
+`compose up` would revert it. That override lives in `/tmp` and is not
+persistent: update your compose file to make a swap permanent. For containers
+started by hand, sparktop prints the steps and declines to run them, since
+reconstructing a `docker run` from `inspect` output is lossy and the machine is
+usually serving traffic.
+
 ## Configuration
 
 Everything is optional; nodes can also be managed at runtime through the API or the setup UI.
@@ -200,6 +262,7 @@ Everything is optional; nodes can also be managed at runtime through the API or 
 | `SPARKTOP_SSH_PASSWORD` | — | Password auth (needs `SPARKTOP_SECRET`) |
 | `SPARKTOP_SECRET` | — | Key for encrypting stored credentials |
 | `SPARKTOP_TOKEN` | — | If set, API and WebSocket require this bearer token |
+| `SPARKTOP_ENABLE_CONTROL` | — | `1` allows container start/stop/restart and image swaps |
 | `SPARKTOP_PORT` | `5757` | Listen port |
 | `SPARKTOP_HOST` | `0.0.0.0` | Bind address |
 | `SPARKTOP_CONFIG` | `./config/nodes.json` | Node registry path |

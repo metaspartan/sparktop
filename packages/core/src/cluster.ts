@@ -102,6 +102,11 @@ export class ClusterMonitor extends EventEmitter {
     return this.cfg;
   }
 
+  /** The live collector for a node, used to route control operations. */
+  collector(nodeId: string): NodeCollector | undefined {
+    return this.collectors.get(nodeId);
+  }
+
   private addCollector(cfg: NodeConfig): void {
     const c = new NodeCollector(cfg, { fastMs: this.cfg.fastIntervalMs, slowMs: this.cfg.slowIntervalMs });
     c.on("snapshot", (snap) => {
@@ -406,14 +411,30 @@ function buildWarnings(
     if (n.status !== "online") continue;
 
     /*
-     * Temperature. A Spark under sustained load sits comfortably in the 80s, so
-     * the bar is deliberately high: this fires for genuine thermal trouble, not
-     * for a machine doing its job.
+     * Temperature, judged per sensor rather than against one global number.
+     *
+     * A Spark's sensors have very different limits: NVMe reports a critical
+     * point near 85°C while the ConnectX-7 ASICs report 105°C. Comparing the
+     * hottest reading in the machine to a single threshold therefore either
+     * cries wolf over a NIC doing exactly what it should, or stays silent while
+     * an SSD cooks. Each sensor is scored against its own critical point where
+     * firmware reports one, and against a limit chosen for its kind where it
+     * does not.
      */
+    const FALLBACK_LIMIT: Record<string, number> = { soc: 100, gpu: 100, nvme: 85, nic: 105, wifi: 100, other: 100 };
+    let worst: { sensor: (typeof n.thermal.sensors)[number]; limit: number; ratio: number } | null = null;
+    for (const sensor of n.thermal.sensors) {
+      const limit = sensor.critC ?? FALLBACK_LIMIT[sensor.kind] ?? 100;
+      const ratio = sensor.tempC / limit;
+      if (!worst || ratio > worst.ratio) worst = { sensor, limit, ratio };
+    }
     const tempId = `temp-${n.id}`;
-    if (n.thermal.maxC !== null && crosses(tempId, n.thermal.maxC, 90, 87)) {
-      add(tempId, n.thermal.maxC >= 97 ? "error" : "warn", `${n.label} running hot`,
-        `Peak sensor at ${n.thermal.maxC.toFixed(1)}°C.`, [n.id]);
+    // 92% of the limit is close enough to matter; 98% is imminent.
+    if (worst && crosses(tempId, worst.ratio * 100, 92, 89)) {
+      add(tempId, worst.ratio >= 0.98 ? "error" : "warn", `${n.label} running hot`,
+        `${worst.sensor.label} at ${worst.sensor.tempC.toFixed(1)}°C of ${worst.limit.toFixed(0)}°C ` +
+          `(${(worst.ratio * 100).toFixed(0)}% of its limit).`,
+        [n.id]);
     }
 
     for (const d of n.disks) {
@@ -476,9 +497,26 @@ function rollUp(nodes: NodeSnapshot[]): ClusterSnapshot["totals"] {
   let vramTotal = 0, vramUsed = 0, cores = 0, cpuSum = 0, memTotal = 0, memUsed = 0, power = 0, containers = 0, gpus = 0;
   let maxTempC: number | null = null;
   let inferenceEndpoints = 0, tokensPerSec = 0, requestsRunning = 0, requestsWaiting = 0;
+  /*
+   * Guard against counting one server twice.
+   *
+   * Summing per endpoint is right for the common topologies: in tensor-parallel
+   * only rank 0 runs an API server, and data-parallel replicas each have their
+   * own independent counters. It is wrong when the same server is reachable
+   * twice — behind a proxy, or bound to two ports — where both would report
+   * byte-identical cumulative totals. Identical model list *and* identical
+   * lifetime token count is not a coincidence, so those fold into one.
+   */
+  const countedServices = new Set<string>();
   for (const n of online) {
     for (const e of n.inference ?? []) {
       inferenceEndpoints++;
+      const fingerprint =
+        e.generationTokensTotal !== null
+          ? `${[...e.models].sort().join("|")}@${e.generationTokensTotal}@${e.requestsFinishedTotal ?? ""}`
+          : `${e.id}`;
+      if (countedServices.has(fingerprint)) continue;
+      countedServices.add(fingerprint);
       tokensPerSec += e.generationTokensPerSec ?? 0;
       requestsRunning += e.requestsRunning ?? 0;
       requestsWaiting += e.requestsWaiting ?? 0;

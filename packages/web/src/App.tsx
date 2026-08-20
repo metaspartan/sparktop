@@ -10,6 +10,7 @@ import { Settings } from "./components/Settings";
 import { Setup } from "./components/Setup";
 import { FabricView } from "./components/FabricView";
 import { InferenceView } from "./components/InferenceView";
+import { ControlsView } from "./components/ControlsView";
 import { NodeCard } from "./components/NodeCard";
 import { TimeChart, type ChartSeries } from "./components/TimeChart";
 
@@ -35,6 +36,7 @@ export default function App() {
     fabric: snapshot && <FabricView snap={snapshot} history={history} themeKey={resolved} />,
     jobs: snapshot && <Jobs jobs={snapshot.jobs} />,
     charts: snapshot && <ClusterCharts snap={snapshot} history={history} themeKey={resolved} />,
+    controls: snapshot && <ControlsView nodes={snapshot.nodes} />,
   };
 
   const visible = layout.order.filter((id) => !layout.hidden.includes(id));

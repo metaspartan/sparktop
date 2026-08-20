@@ -16,6 +16,12 @@ import {
   loadConfig,
   nodesFromEnv,
   safeEqual,
+  applyImageSwap,
+  containerAction,
+  controlEnabled,
+  listImages,
+  planImageSwap,
+  pullImage,
   saveConfig,
   testNodeConnection,
   toPublicNode,
@@ -246,6 +252,84 @@ const server = Bun.serve<SocketData, never>({
         } catch (e) {
           return err((e as Error).message);
         }
+      }
+
+      /*
+       * Control plane.
+       *
+       * These are the only routes that change a node, and they are gated by
+       * SPARKTOP_ENABLE_CONTROL. The dashboard is unauthenticated by default,
+       * which is acceptable for reading metrics and not for stopping
+       * containers, so the capability is opt-in rather than merely
+       * confirm-on-click.
+       */
+      if (pathname === "/api/control" && req.method === "GET") {
+        return json({ enabled: controlEnabled(), tokenRequired: API_TOKEN !== "" });
+      }
+
+      const ctrl = /^\/api\/nodes\/([^/]+)\/(images|container|swap)$/.exec(pathname);
+      if (ctrl?.[1] && ctrl[2]) {
+        const nodeId = decodeURIComponent(ctrl[1]);
+        const collector = monitor.collector(nodeId);
+        if (!collector) return err("No such node", 404);
+
+        try {
+          if (ctrl[2] === "images" && req.method === "GET") {
+            // Read-only, so it stays available even with control disabled:
+            // seeing what is on a node is not a change to it.
+            return json({ images: await collector.withClient((c) => listImages(c)) });
+          }
+
+          if (ctrl[2] === "container" && req.method === "POST") {
+            const body = (await req.json()) as {
+              container?: string;
+              action?: "start" | "stop" | "restart";
+              dryRun?: boolean;
+              timeoutSec?: number;
+            };
+            if (!body.container) return err("container is required");
+            if (body.action !== "start" && body.action !== "stop" && body.action !== "restart") {
+              return err("action must be start, stop or restart");
+            }
+            const res = await collector.withClient((c) =>
+              containerAction(c, body.container!, body.action!, {
+                ...(body.dryRun !== undefined ? { dryRun: body.dryRun } : {}),
+                ...(body.timeoutSec !== undefined ? { timeoutSec: body.timeoutSec } : {}),
+              })
+            );
+            return json(res, res.ok ? 200 : 500);
+          }
+
+          if (ctrl[2] === "swap" && req.method === "POST") {
+            const body = (await req.json()) as {
+              container?: string;
+              image?: string;
+              apply?: boolean;
+              pullOnly?: boolean;
+            };
+            if (!body.container || !body.image) return err("container and image are required");
+
+            if (body.pullOnly) {
+              const res = await collector.withClient((c) => pullImage(c, body.image!));
+              return json(res, res.ok ? 200 : 500);
+            }
+
+            // A plan is always produced first; applying is a separate, explicit
+            // request, so the destructive step is never a side effect of asking
+            // what it would do.
+            const plan = await collector.withClient((c) => planImageSwap(c, body.container!, body.image!));
+            if (!body.apply) return json({ plan, applied: false });
+
+            const res = await collector.withClient((c) => applyImageSwap(c, plan));
+            return json({ plan, applied: res.ok, result: res }, res.ok ? 200 : 500);
+          }
+        } catch (e) {
+          const msg = (e as Error).message;
+          const name = (e as Error).name;
+          const status = name === "ControlDisabledError" ? 403 : name === "InvalidTargetError" ? 400 : 500;
+          return json({ error: msg }, status);
+        }
+        return err("Method not allowed", 405);
       }
 
       const nodeMatch = /^\/api\/nodes\/([^/]+)$/.exec(pathname);

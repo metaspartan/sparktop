@@ -150,6 +150,20 @@ export class NodeCollector extends EventEmitter {
     return this.cfg.label || this.slow.host.hostname || this.cfg.host;
   }
 
+  /**
+   * Borrow this node's SSH connection for a control operation.
+   *
+   * Reuses the collector's existing connection rather than opening another:
+   * these nodes cap concurrent sessions, and a control action should not be
+   * able to starve metric collection of one.
+   */
+  async withClient<T>(fn: (client: Client) => Promise<T>): Promise<T> {
+    if (!this.client || this.status !== "online") {
+      throw new Error(`${this.label} is not connected`);
+    }
+    return fn(this.client);
+  }
+
   start(): void {
     this.stopped = false;
     void this.connect();
