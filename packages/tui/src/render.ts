@@ -135,7 +135,9 @@ function nodeBlock(n: NodeSnapshot, st: RenderState, W: number): string[] {
 
   const head =
     `${statusDot} ${bold(C.ink(n.label))} ${dim(n.host)}` +
-    (n.info.isSpark ? ` ${C.series1("[DGX Spark]")}` : "") +
+    // Name the actual variant: in a mixed fleet "Ascent GX10" and
+    // "ThinkStation PGX" are what distinguish otherwise identical machines.
+    (n.info.isSpark ? ` ${C.series1(`[${n.info.variantName || "DGX Spark"}]`)}` : "") +
     dim(`  ${n.probeMs}ms`);
 
   if (n.status !== "online") {

@@ -43,10 +43,16 @@ ENV NODE_ENV=production \
     SPARKTOP_WEB_ROOT=/app/packages/web/dist
 
 # Runtime needs only production dependencies.
+#
+# Every workspace member's manifest is copied, including the web package whose
+# source is not shipped: bun resolves the workspace against the lockfile, and
+# omitting a member makes the lockfile look stale, which --frozen-lockfile
+# (correctly) refuses to work around.
 COPY package.json bun.lock* ./
 COPY packages/core/package.json packages/core/
 COPY packages/server/package.json packages/server/
 COPY packages/tui/package.json packages/tui/
+COPY packages/web/package.json packages/web/
 RUN bun install --frozen-lockfile --production --ignore-scripts && \
     rm -rf /root/.bun/install/cache
 
