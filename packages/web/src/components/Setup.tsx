@@ -149,7 +149,7 @@ export function Setup({ onAdded }: { onAdded: () => void }) {
         <div className="grid gap-3 sm:grid-cols-[2fr_1fr]">
           <Input
             label="Host"
-            placeholder="192.168.1.149"
+            placeholder="10.0.0.11"
             value={draft.host}
             onChange={(v) => set("host", v)}
             autoFocus
@@ -241,7 +241,7 @@ export function Setup({ onAdded }: { onAdded: () => void }) {
           <p>Nodes can also be declared up front, which is usually easier for more than a couple of machines:</p>
           <pre className="overflow-x-auto rounded-lg bg-surface-2 p-3 text-[11px] text-ink">
 {`# One key for every Spark, set before starting the server
-export SPARKTOP_NODES="carsen@192.168.1.149,carsen@192.168.1.37"
+export SPARKTOP_NODES="ubuntu@10.0.0.11,ubuntu@10.0.0.12"
 export SPARKTOP_SSH_KEY=/config/id_ed25519`}
           </pre>
           <p>
@@ -249,8 +249,8 @@ export SPARKTOP_SSH_KEY=/config/id_ed25519`}
           </p>
           <pre className="overflow-x-auto rounded-lg bg-surface-2 p-3 text-[11px] text-ink">
 {`ssh-keygen -t ed25519 -f ./config/id_ed25519 -N ""
-for h in 192.168.1.149 192.168.1.37; do
-  ssh-copy-id -i ./config/id_ed25519.pub carsen@$h
+for h in 10.0.0.11 10.0.0.12; do
+  ssh-copy-id -i ./config/id_ed25519.pub ubuntu@$h
 done`}
           </pre>
         </div>

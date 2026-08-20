@@ -8,6 +8,10 @@ Built for GB10. Sees the 200G ConnectX-7 interconnect that ordinary tools miss.
 
 [Quick start](#quick-start) · [Why RDMA counters](#why-the-usual-network-stats-lie) · [TUI](#terminal-ui) · [API](#http-api) · [Configuration](#configuration)
 
+[![CI](https://github.com/metaspartan/sparktop/actions/workflows/ci.yml/badge.svg)](https://github.com/metaspartan/sparktop/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+![Platform](https://img.shields.io/badge/arch-arm64%20%7C%20amd64-informational)
+
 </div>
 
 ---
@@ -73,7 +77,15 @@ product_name    GX10
 product_family  DGX Spark
 ```
 
-Each variant has a chassis icon drawn to match its front panel — vector, theme-aware, and no third-party image licensing. To use product photography instead, drop a file at `packages/web/public/variants/<id>.webp` (`nvidia`, `asus`, `dell`, `hp`, `lenovo`, `msi`, `gigabyte`, `acer`) and it is used automatically, falling back to the drawn icon if absent.
+Every node card shows its chassis, so a mixed rack is readable at a glance. The images live in `packages/web/public/variants/<id>.webp`; any variant without one falls back to a drawn vector icon, so the UI still distinguishes hardware if you strip them. `scripts/split-variants.py` regenerates them from your own sources.
+
+## Requirements
+
+- One or more DGX Spark (GB10) machines, reachable over SSH. Non-Spark NVIDIA
+  hosts work too — you simply get no fabric section for them.
+- An SSH user on each node. No root and no passwordless sudo required; add the
+  user to the `docker` group if you want container metrics.
+- To run sparktop itself: Docker, or [Bun](https://bun.sh) 1.1+.
 
 ## Quick start
 
@@ -89,7 +101,7 @@ Put an SSH key where the container can read it, and authorise it on each Spark:
 
 ```bash
 ssh-keygen -t ed25519 -f ./config/id_ed25519 -N ""
-for h in 192.168.1.149 192.168.1.37; do ssh-copy-id -i ./config/id_ed25519.pub carsen@$h; done
+for h in 10.0.0.11 10.0.0.12; do ssh-copy-id -i ./config/id_ed25519.pub ubuntu@$h; done
 ```
 
 Set `SPARKTOP_NODES` in `.env`, then:
@@ -128,18 +140,18 @@ bun packages/tui/src/index.ts --server http://localhost:5757
 
 ```
 sparktop │ 2/2 nodes                                              21:12:18
-fabric 2.88 Gbps/800G · vram 200 GB/243 GB · cpu 14% · pwr 85.3 W · temp 87°C
+fabric 16.3 Gbps/800G · vram 200 GB/243 GB · cpu 18% · pwr 132 W · temp 89°C
 
 ── Nodes ──────────────────────────────────────────────────────────────────
-● gx10-838f 192.168.1.149 [DGX Spark]  225ms
-  GPU  ██████████████████████▊·  95%   95%                          ███
+● spark-01 10.0.0.11 [ASUS Ascent GX10]  225ms
+  GPU  ██████████████████████▊·  96%   96%                          ███
   VRAM ███████████████████▊····  82%   100 GB/122 GB                ▇▇▇
-  CPU  ███▍····················  14%   14%                          ▁▂▂
-  temp 87°C  pwr 42.5 W  net ↓1.36 Gbps ↑1.36 Gbps  up 4h 10m
+  CPU  ███▍····················  18%   18%                          ▁▂▂
+  temp 89°C  pwr 65.8 W  net ↓8.15 Gbps ↑8.15 Gbps  up 5h 1m
 
 ── Interconnect ───────────────────────────────────────────────────────────
-  gx10-838f:enp1s0f1np1    ⇄ gx10-7558:enp1s0f1np1    ▏···  2.88 Gbps /200G ✓
-  gx10-838f:enP2p1s0f1np1  · gx10-7558:enP2p1s0f1np1  ····      0 Gbps /200G ✓
+  spark-01:enp1s0f1np1    ⇄ spark-02:enp1s0f1np1    ▏···  16.3 Gbps /200G ✓
+  spark-01:enP2p1s0f1np1  · spark-02:enP2p1s0f1np1  ····      0 Gbps /200G ✓
 ```
 
 Keys: `o` overview · `f` fabric · `p` processes · `c` containers · `←/→` select node · `space` pause · `q` quit.
@@ -220,7 +232,7 @@ Everything is optional; nodes can also be managed at runtime through the API or 
 ```bash
 curl -X POST http://localhost:5757/api/nodes \
   -H 'content-type: application/json' \
-  -d '{"host":"192.168.1.149","username":"carsen","privateKeyPath":"/config/id_ed25519"}'
+  -d '{"host":"10.0.0.11","username":"ubuntu","privateKeyPath":"/config/id_ed25519"}'
 ```
 
 Adding, editing and removing nodes all take effect without a restart.
@@ -245,6 +257,18 @@ packages/
 ```
 
 The dependency tree is deliberately small: `ssh2` is the only runtime dependency of the collector, and the TUI has none.
+
+## Contributing
+
+Issues and pull requests are welcome. Before opening a PR:
+
+```bash
+bun run typecheck && bun test && bun run scan
+```
+
+If you are adding a metric, put the parsing in `packages/core/src/parse.ts` with
+a test built from real probe output — the existing tests use values captured
+verbatim from hardware, which is what makes them worth having.
 
 ## Acknowledgements
 
