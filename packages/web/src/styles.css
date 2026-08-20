@@ -12,20 +12,29 @@
 :root {
   color-scheme: light;
 
-  --surface-0: #f9f9f7; /* page plane */
-  --surface-1: #fcfcfb; /* card / chart surface */
-  --surface-2: #f2f2ee; /* recessed rows, table headers */
-  --surface-hover: #ecece6;
+  --surface-0: #f2f3f1; /* page plane */
+  --surface-1: #fbfcfa; /* card / chart surface */
+  --surface-2: #eaece7; /* recessed rows, table headers */
+  --surface-hover: #e1e4dd;
 
   --text-primary: #0b0b0b;
   --text-secondary: #52514e;
   --text-muted: #898781;
 
-  --border: rgba(11, 11, 11, 0.1);
-  --grid: #e1e0d9;
-  --axis: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.11);
+  --grid: #dcdfd8;
+  --axis: #bec1b6;
 
-  /* Categorical series, assigned in fixed order and never cycled. */
+  /*
+   * Categorical series, assigned in fixed order and never cycled.
+   *
+   * Deliberately NOT led by the NVIDIA green accent. Green measures ΔE 3.2
+   * against the orange in slot 2 under protanopia — effectively identical for
+   * red-blind viewers — and #76b900 sits at L 0.713, outside the dark mode's
+   * categorical lightness band. Every reordering that puts green first fails
+   * one gate or another, so brand colour stays on the chrome and chart series
+   * keep the ordering that validates in both themes.
+   */
   --series-1: #2a78d6;
   --series-2: #eb6834;
   --series-3: #1baf7a;
@@ -41,25 +50,26 @@
   --status-serious: #ec835a;
   --status-critical: #d03b3b;
 
-  --accent: #2a78d6;
+  --accent: #5c8f00;
+  --accent-strong: #4f7c00;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) {
     color-scheme: dark;
 
-    --surface-0: #0d0d0d;
-    --surface-1: #1a1a19;
-    --surface-2: #232322;
-    --surface-hover: #2c2c2a;
+    --surface-0: #0a0a0a;
+    --surface-1: #121212;
+    --surface-2: #1a1a1a;
+    --surface-hover: #242424;
 
     --text-primary: #ffffff;
     --text-secondary: #c3c2b7;
     --text-muted: #898781;
 
-    --border: rgba(255, 255, 255, 0.1);
-    --grid: #2c2c2a;
-    --axis: #383835;
+    --border: rgba(255, 255, 255, 0.09);
+    --grid: #212121;
+    --axis: #2e2e2e;
 
     --series-1: #3987e5;
     --series-2: #d95926;
@@ -70,25 +80,26 @@
     --series-7: #9085e9;
     --series-8: #e66767;
 
-    --accent: #3987e5;
+    --accent: #76b900;
+    --accent-strong: #8fd400;
   }
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --surface-0: #0d0d0d;
-  --surface-1: #1a1a19;
-  --surface-2: #232322;
-  --surface-hover: #2c2c2a;
+  --surface-0: #0a0a0a;
+  --surface-1: #121212;
+  --surface-2: #1a1a1a;
+  --surface-hover: #242424;
 
   --text-primary: #ffffff;
   --text-secondary: #c3c2b7;
   --text-muted: #898781;
 
-  --border: rgba(255, 255, 255, 0.1);
-  --grid: #2c2c2a;
-  --axis: #383835;
+  --border: rgba(255, 255, 255, 0.09);
+  --grid: #212121;
+  --axis: #2e2e2e;
 
   --series-1: #3987e5;
   --series-2: #d95926;
@@ -99,7 +110,8 @@
   --series-7: #9085e9;
   --series-8: #e66767;
 
-  --accent: #3987e5;
+  --accent: #76b900;
+  --accent-strong: #8fd400;
 }
 
 /* Expose tokens to Tailwind so utilities like bg-surface-1 exist. */
@@ -119,6 +131,7 @@
   --color-serious: var(--status-serious);
   --color-critical: var(--status-critical);
   --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
   --color-series-1: var(--series-1);
   --color-series-2: var(--series-2);
   --color-series-3: var(--series-3);

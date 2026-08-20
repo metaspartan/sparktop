@@ -250,20 +250,6 @@ function OverviewTab({ node, memPct }: { node: NodeSnapshot; memPct: number }) {
           <Row label="Processes" value={`${node.cpu.procsRunning} / ${node.cpu.procsTotal}`} />
         </div>
 
-        {node.cpu.perCorePct.length > 0 && (
-          <div className="pt-1">
-            <div className="mb-1 flex items-baseline justify-between gap-2">
-              <span className="text-[11px] font-medium uppercase tracking-wide text-ink-muted">
-                Per-core
-              </span>
-              <span className="tnum text-[11px] text-ink-secondary">
-                {node.cpu.perCorePct.length} cores · peak{" "}
-                {Math.max(...node.cpu.perCorePct).toFixed(0)}%
-              </span>
-            </div>
-            <CoreStrip cores={node.cpu.perCorePct} />
-          </div>
-        )}
       </div>
 
       <div className="space-y-3">
@@ -276,6 +262,20 @@ function OverviewTab({ node, memPct }: { node: NodeSnapshot; memPct: number }) {
         )}
         {!g && <p className="text-[12px] text-ink-muted">No NVIDIA GPU detected on this node.</p>}
       </div>
+
+      {/* Spans both columns: 20 bars squeezed into half the card are
+          unreadable, and the strip reads as one picture of the whole CPU. */}
+      {node.cpu.perCorePct.length > 0 && (
+        <div className="sm:col-span-2">
+          <div className="mb-1.5 flex items-baseline justify-between gap-2">
+            <h4 className="text-[11px] font-medium uppercase tracking-wide text-ink-muted">Per-core CPU</h4>
+            <span className="tnum text-[11px] text-ink-secondary">
+              {node.cpu.perCorePct.length} cores · peak {Math.max(...node.cpu.perCorePct).toFixed(0)}%
+            </span>
+          </div>
+          <CoreStrip cores={node.cpu.perCorePct} height={30} />
+        </div>
+      )}
 
       <div className="sm:col-span-2">
         <h4 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-ink-muted">Storage</h4>

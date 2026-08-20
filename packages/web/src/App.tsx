@@ -188,16 +188,16 @@ function SummaryStrip({ snap }: { snap: ClusterSnapshot }) {
   ];
 
   return (
-    <div className="order-last flex w-full flex-wrap items-center gap-x-5 gap-y-1 border-t border-edge pt-1.5 lg:order-none lg:w-auto lg:border-0 lg:pt-0">
+    <div className="order-last flex w-full flex-wrap items-center gap-x-7 gap-y-2 border-t border-edge pt-2 lg:order-none lg:w-auto lg:border-0 lg:pt-0">
       {items.map((i) => (
-        <div key={i.label} className="min-w-[84px]">
-          <div className="flex items-baseline gap-1.5">
+        <div key={i.label} className="min-w-[118px] flex-1 sm:flex-none">
+          <div className="flex items-baseline gap-2">
             <span className="text-[10px] uppercase tracking-wide text-ink-muted">{i.label}</span>
-            <span className="tnum text-[13px] font-semibold leading-none text-ink">{i.value}</span>
+            <span className="tnum text-[14px] font-semibold leading-none text-ink">{i.value}</span>
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="mt-0.5 flex items-center gap-2">
             <span className="truncate text-[10px] text-ink-muted">{i.sub}</span>
-            {i.pct !== undefined && <Meter value={i.pct} tone={i.tone ?? "accent"} className="w-10" />}
+            {i.pct !== undefined && <Meter value={i.pct} tone={i.tone ?? "accent"} className="w-14" />}
           </div>
         </div>
       ))}
