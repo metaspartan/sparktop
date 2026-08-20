@@ -535,14 +535,25 @@ export function parseHost(body: string | undefined): {
   arch: string;
   osPretty: string;
   product: string | null;
+  sysVendor: string | null;
+  productFamily: string | null;
+  productVersion: string | null;
+  boardName: string | null;
 } {
   const l = (body ?? "").split("\n").map((s) => s.trim());
+  // DMI fields commonly hold this placeholder when the OEM left them unset.
+  const dmi = (v: string | undefined): string | null =>
+    !v || v === "Default string" || v === "To Be Filled By O.E.M." ? null : v;
   return {
     hostname: l[0] ?? "",
     kernel: l[1] ?? "",
     arch: l[2] ?? "",
     osPretty: l[3] ?? "",
-    product: l[4] || null,
+    product: dmi(l[4]),
+    sysVendor: dmi(l[5]),
+    productFamily: dmi(l[6]),
+    productVersion: dmi(l[7]),
+    boardName: dmi(l[8]),
   };
 }
 

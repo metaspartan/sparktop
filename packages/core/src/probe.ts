@@ -157,7 +157,12 @@ hostname 2>/dev/null
 uname -r 2>/dev/null
 uname -m 2>/dev/null
 (grep -m1 '^PRETTY_NAME=' /etc/os-release 2>/dev/null | cut -d'"' -f2) || echo ""
-cat /sys/devices/virtual/dmi/id/product_name 2>/dev/null || echo ""
+# DMI identifies the chassis vendor. product_family reads "DGX Spark" on every
+# variant, which is what makes Spark detection reliable across all eight OEMs.
+for f in product_name sys_vendor product_family product_version board_name; do
+  v=\$(cat "/sys/devices/virtual/dmi/id/\$f" 2>/dev/null)
+  printf '%s\\n' "\${v:-}"
+done
 
 S cpuinfo
 nproc 2>/dev/null

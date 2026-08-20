@@ -13,7 +13,7 @@ import type { ClusterSnapshot, NodeSnapshot } from "./types.ts";
 function node(id: string, status: NodeSnapshot["status"] = "online"): NodeSnapshot {
   return {
     id, label: id, host: "10.0.0.1", status, error: null, ts: 0, probeMs: 1,
-    info: { hostname: id, osPretty: "", kernel: "", arch: "", product: null, isSpark: true, uptimeSec: 1, bootTime: 0 },
+    info: { hostname: id, osPretty: "", kernel: "", arch: "", product: null, sysVendor: null, productFamily: null, isSpark: true, variant: "unknown" as const, variantName: "DGX Spark", vendor: "Unknown", uptimeSec: 1, bootTime: 0 },
     cpu: { cores: 20, model: "", usagePct: 50, perCorePct: [], loadAvg: [0, 0, 0], freqMhz: 0, procsRunning: 0, procsTotal: 0 },
     memory: { totalBytes: 100, usedBytes: 50, availableBytes: 50, freeBytes: 0, cachedBytes: 0, buffersBytes: 0, sharedBytes: 0, swapTotalBytes: 0, swapUsedBytes: 0 },
     gpu: null,

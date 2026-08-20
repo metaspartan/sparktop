@@ -54,7 +54,7 @@ function node(id: string, ports: FabricPort[], over: Partial<NodeSnapshot> = {})
     error: null,
     ts: Date.now(),
     probeMs: 100,
-    info: { hostname: id, osPretty: "Ubuntu", kernel: "6.17", arch: "aarch64", product: "GX10", isSpark: true, uptimeSec: 100, bootTime: 0 },
+    info: { hostname: id, osPretty: "Ubuntu", kernel: "6.17", arch: "aarch64", product: "GX10", sysVendor: "ASUSTeK COMPUTER INC.", productFamily: "DGX Spark", isSpark: true, variant: "asus" as const, variantName: "ASUS Ascent GX10", vendor: "ASUS", uptimeSec: 100, bootTime: 0 },
     cpu: { cores: 20, model: "Cortex-X925", usagePct: 5, perCorePct: [], loadAvg: [0, 0, 0], freqMhz: 3900, procsRunning: 1, procsTotal: 100 },
     memory: { totalBytes: 128e9, usedBytes: 64e9, availableBytes: 64e9, freeBytes: 1e9, cachedBytes: 1e9, buffersBytes: 0, sharedBytes: 0, swapTotalBytes: 0, swapUsedBytes: 0 },
     gpu: null,

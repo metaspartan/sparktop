@@ -14,6 +14,7 @@ import { readFile } from "node:fs/promises";
 import { Client, type ConnectConfig } from "ssh2";
 import { FAST_PROBE, SLOW_PROBE } from "./probe.ts";
 import { decryptSecret } from "./crypto.ts";
+import { detectVariant, isDgxSpark } from "./variants.ts";
 import type {
   DockerContainer,
   FabricErrors,
@@ -346,7 +347,12 @@ export class NodeCollector extends EventEmitter {
         kernel: this.slow.host.kernel,
         arch: this.slow.host.arch,
         product: this.slow.host.product,
+        sysVendor: this.slow.host.sysVendor,
+        productFamily: this.slow.host.productFamily,
         isSpark: false,
+        variant: "unknown" as const,
+        variantName: "DGX Spark",
+        vendor: "Unknown",
         uptimeSec: 0,
         bootTime: 0,
       },
@@ -404,16 +410,32 @@ export class NodeCollector extends EventEmitter {
     );
     const interfaces = this.buildInterfaces(netCounters, carrier, fabricNetdevs, ts);
 
+    /*
+     * Identify the machine from DMI rather than by pattern-matching hostnames.
+     * Every GB10 variant reports product_family "DGX Spark" whoever built the
+     * chassis, and sys_vendor names the manufacturer.
+     */
+    const dmi = {
+      sysVendor: this.slow.host.sysVendor,
+      productName: this.slow.host.product,
+      productFamily: this.slow.host.productFamily,
+      productVersion: this.slow.host.productVersion,
+      boardName: this.slow.host.boardName,
+    };
+    const variant = detectVariant(dmi);
     const info = {
       hostname: this.slow.host.hostname || this.cfg.host,
       osPretty: this.slow.host.osPretty,
       kernel: this.slow.host.kernel,
       arch: this.slow.host.arch,
       product: this.slow.host.product,
-      isSpark:
-        /spark|gb10/i.test(this.slow.host.product ?? "") ||
-        /GB10/i.test(gpu?.name ?? "") ||
-        /^gx10-/i.test(this.slow.host.hostname),
+      sysVendor: this.slow.host.sysVendor,
+      productFamily: this.slow.host.productFamily,
+      // Fall back to the GPU name for firmware that leaves DMI unpopulated.
+      isSpark: isDgxSpark(dmi) || /GB10/i.test(gpu?.name ?? ""),
+      variant: variant.id,
+      variantName: variant.name,
+      vendor: variant.vendor,
       uptimeSec: load.uptimeSec,
       bootTime: ts - load.uptimeSec * 1000,
     };
@@ -663,7 +685,7 @@ interface SlowState {
 
 function emptySlow(): SlowState {
   return {
-    host: { hostname: "", kernel: "", arch: "", osPretty: "", product: null },
+    host: { hostname: "", kernel: "", arch: "", osPretty: "", product: null, sysVendor: null, productFamily: null, productVersion: null, boardName: null },
     cpu: { cores: 0, model: "" },
     cudaVersion: "",
     graphicsProcs: [],

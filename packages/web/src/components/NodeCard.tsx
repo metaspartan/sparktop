@@ -21,6 +21,7 @@ import {
 } from "@sparktop/core";
 import { Badge, Card, LegendItem, Meter, Sparkline, Stat, StatusDot, tempTone, utilTone } from "./primitives";
 import { TimeChart } from "./TimeChart";
+import { VariantIcon } from "./VariantIcon";
 
 export function NodeCard({
   node,
@@ -70,10 +71,22 @@ export function NodeCard({
   return (
     <Card
       title={
-        <span className="flex flex-wrap items-center gap-2">
-          {node.label}
-          <span className="text-[11px] font-normal text-ink-muted">{node.host}</span>
-          {node.info.isSpark && <Badge tone="accent">DGX Spark</Badge>}
+        <span className="flex min-w-0 items-center gap-2.5">
+          {node.info.isSpark && (
+            <VariantIcon
+              variant={node.info.variant}
+              title={node.info.variantName}
+              width={44}
+            />
+          )}
+          <span className="flex min-w-0 flex-col leading-tight">
+            <span className="truncate">{node.label}</span>
+            <span className="truncate text-[11px] font-normal text-ink-muted">
+              {node.info.isSpark ? node.info.variantName : node.info.product || "Unknown hardware"}
+              <span className="mx-1.5 opacity-50">·</span>
+              {node.host}
+            </span>
+          </span>
         </span>
       }
       right={
@@ -410,7 +423,10 @@ function HardwareTab({ node }: { node: NodeSnapshot }) {
       <div className="space-y-1.5 text-[12px]">
         <h4 className="mb-2 text-[11px] font-medium uppercase tracking-wide text-ink-muted">System</h4>
         <Row label="Hostname" value={node.info.hostname} />
+        <Row label="Model" value={node.info.isSpark ? node.info.variantName : "—"} />
+        <Row label="Manufacturer" value={node.info.sysVendor ?? "—"} />
         <Row label="Product" value={node.info.product ?? "—"} />
+        <Row label="Family" value={node.info.productFamily ?? "—"} />
         <Row label="OS" value={node.info.osPretty} />
         <Row label="Kernel" value={`${node.info.kernel} (${node.info.arch})`} />
         <Row label="CPU" value={node.cpu.model || "—"} />

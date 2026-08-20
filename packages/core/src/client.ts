@@ -7,5 +7,10 @@
  * TUI render identical numbers without duplicating the logic.
  */
 
+export * from "./variants.ts";
 export * from "./types.ts";
 export * from "./format.ts";
+// Safe in a browser: this module imports only types, and the browser needs
+// `historySample` to extend chart series from the live snapshot stream using
+// exactly the same derivation the server used for its backlog.
+export * from "./history.ts";

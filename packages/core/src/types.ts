@@ -1,3 +1,5 @@
+import type { SparkVariantId } from "./variants.ts";
+
 /**
  * Shared data model for sparktop.
  *
@@ -268,10 +270,20 @@ export interface HostInfo {
   osPretty: string;
   kernel: string;
   arch: string;
-  /** Product name from DMI, e.g. "NVIDIA DGX Spark". */
+  /** DMI product_name, e.g. "GX10". */
   product: string | null;
-  /** True when the node looks like a DGX Spark (GB10). */
+  /** DMI sys_vendor, e.g. "ASUSTeK COMPUTER INC.". */
+  sysVendor: string | null;
+  /** DMI product_family — "DGX Spark" on every variant. */
+  productFamily: string | null;
+  /** True when DMI identifies this as a DGX Spark, whoever built the chassis. */
   isSpark: boolean;
+  /** Which of the eight GB10 variants this is. */
+  variant: SparkVariantId;
+  /** Full product name for the variant, e.g. "ASUS Ascent GX10". */
+  variantName: string;
+  /** Manufacturer, normalised for display, e.g. "ASUS". */
+  vendor: string;
   uptimeSec: number;
   bootTime: number;
 }

@@ -50,6 +50,31 @@ Some notes on DGX Spark networking, since the hardware is easy to misread:
 - On GB10 that single cable **presents as two RDMA interfaces** of roughly 100 Gb/s each. Reaching the full link speed means using both — `NCCL_IB_MERGE_NICS=1` — not adding hardware.
 - `sparktop` will never suggest that more cables means more bandwidth.
 
+## Hardware variants
+
+GB10 ships as NVIDIA's Founders Edition plus seven NVIDIA-certified partner workstations. `sparktop` identifies which one each node is and shows it on the card, so a mixed fleet is readable at a glance:
+
+| Variant | Manufacturer | Typical DMI `product_name` |
+|---|---|---|
+| NVIDIA DGX Spark (Founders Edition) | NVIDIA | `DGX Spark` |
+| ASUS Ascent GX10 | ASUSTeK | `GX10` |
+| Dell Pro Max with GB10 | Dell | `Pro Max` |
+| HP ZGX Nano AI Station | HP | `ZGX Nano G1n` |
+| Lenovo ThinkStation PGX | Lenovo | `PGX` |
+| MSI EdgeXpert | Micro-Star | `MS-C931` |
+| GIGABYTE AI TOP ATOM | GIGABYTE | `AI TOP ATOM` |
+| Acer Veriton GN100 | Acer | `GN100` |
+
+Detection reads DMI rather than guessing from hostnames. `product_family` reports `DGX Spark` on **every** variant regardless of who built the chassis, which makes it the reliable signal; `sys_vendor` then names the manufacturer. An ASUS unit reports:
+
+```
+sys_vendor      ASUSTeK COMPUTER INC.
+product_name    GX10
+product_family  DGX Spark
+```
+
+Each variant has a chassis icon drawn to match its front panel — vector, theme-aware, and no third-party image licensing. To use product photography instead, drop a file at `packages/web/public/variants/<id>.webp` (`nvidia`, `asus`, `dell`, `hp`, `lenovo`, `msi`, `gigabyte`, `acer`) and it is used automatically, falling back to the drawn icon if absent.
+
 ## Quick start
 
 ### Docker Compose (recommended)

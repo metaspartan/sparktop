@@ -8,6 +8,44 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ClusterSnapshot, HistoryPayload, PublicNodeConfig, ServerMessage } from "@sparktop/core";
+import { historySample } from "@sparktop/core";
+
+/** Samples retained in the browser. Matches the server's default backlog. */
+const HISTORY_CAPACITY = 300;
+
+/**
+ * Extend the local history with one snapshot.
+ *
+ * The server sends its backlog once, on connect; every tick after that arrives
+ * as a snapshot, and the charts advance from here. Without this the graphs
+ * would freeze at whatever was buffered when the page loaded while the rest of
+ * the dashboard kept updating.
+ *
+ * Returns a new object because React state must not be mutated in place.
+ */
+function appendSample(prev: HistoryPayload | null, snap: ClusterSnapshot): HistoryPayload {
+  const base: HistoryPayload = prev ?? { ts: [], series: {} };
+  // A duplicate or out-of-order snapshot would corrupt the timeline.
+  const last = base.ts[base.ts.length - 1];
+  if (last !== undefined && snap.ts <= last) return base;
+
+  const sample = historySample(snap);
+  const ts = [...base.ts, snap.ts];
+  const overflow = Math.max(0, ts.length - HISTORY_CAPACITY);
+  const trimmedTs = overflow ? ts.slice(overflow) : ts;
+  const priorLength = base.ts.length;
+
+  const series: HistoryPayload["series"] = {};
+  const keys = new Set([...Object.keys(base.series), ...Object.keys(sample)]);
+  for (const key of keys) {
+    // Back-fill a series that appears late so it stays index-aligned.
+    const existing = base.series[key] ?? new Array<number | null>(priorLength).fill(null);
+    const value = sample[key];
+    const next = [...existing, value === undefined || Number.isNaN(value) ? null : value];
+    series[key] = overflow ? next.slice(overflow) : next;
+  }
+  return { ts: trimmedTs, series };
+}
 
 export type ConnState = "connecting" | "open" | "closed";
 
@@ -82,8 +120,16 @@ export function useCluster(): ClusterFeed {
       if (msg.type === "snapshot") {
         lastAt.current = Date.now();
         setSnapshot(msg.data);
+        // Charts advance from the live stream, in step with everything else.
+        setHistory((h) => appendSample(h, msg.data));
       } else if (msg.type === "history") {
-        setHistory(normalizeHistory(msg.data));
+        // The server's backlog is authoritative on arrival; live snapshots
+        // extend it from there. Keep whichever has more depth, so a reconnect
+        // does not discard samples collected while the socket was down.
+        setHistory((h) => {
+          const incoming = normalizeHistory(msg.data);
+          return (h?.ts.length ?? 0) > incoming.ts.length ? h : incoming;
+        });
       } else if (msg.type === "config") {
         setNodes(msg.data.nodes);
         setIntervals({ fast: msg.data.fastIntervalMs, slow: msg.data.slowIntervalMs });

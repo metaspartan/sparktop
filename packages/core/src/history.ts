@@ -47,6 +47,58 @@ class Ring {
 /** Per-node metrics kept for charting. */
 const NODE_METRICS = ["cpu", "mem", "gpu", "vram", "temp", "power", "fabricRx", "fabricTx"] as const;
 
+/**
+ * Derive one tick's worth of chart values from a snapshot.
+ *
+ * Shared by the server's buffer and the browser's, so both extend the same
+ * series the same way. The server sends its backlog once on connect and the
+ * client appends from the snapshot stream after that — re-sending the whole
+ * history every second would be wasteful, and letting the client compute its
+ * own values would risk the two drifting apart.
+ *
+ * NaN means "no reading at this instant" and becomes a gap in the chart.
+ */
+export function historySample(snap: ClusterSnapshot): Record<string, number> {
+  const out: Record<string, number> = {};
+
+  for (const n of snap.nodes) {
+    const key = (m: (typeof NODE_METRICS)[number]) => `${n.id}:${m}`;
+    if (n.status !== "online") {
+      for (const m of NODE_METRICS) out[key(m)] = NaN;
+      continue;
+    }
+    out[key("cpu")] = n.cpu.usagePct;
+    out[key("mem")] = n.memory.totalBytes > 0 ? (n.memory.usedBytes / n.memory.totalBytes) * 100 : 0;
+    out[key("gpu")] = n.gpu?.utilPct ?? 0;
+    out[key("vram")] =
+      n.gpu && n.gpu.vramTotalBytes > 0 ? (n.gpu.vramUsedBytes / n.gpu.vramTotalBytes) * 100 : 0;
+    out[key("temp")] = n.thermal.maxC ?? NaN;
+    out[key("power")] = n.gpu?.powerDrawW ?? NaN;
+
+    let rx = 0;
+    let tx = 0;
+    for (const port of n.fabric.ports) {
+      rx += ((port.rdmaRxBps + port.tcpRxBps) * 8) / 1e9;
+      tx += ((port.rdmaTxBps + port.tcpTxBps) * 8) / 1e9;
+    }
+    out[key("fabricRx")] = Math.round(rx * 100) / 100;
+    out[key("fabricTx")] = Math.round(tx * 100) / 100;
+  }
+
+  out["cluster:traffic"] = snap.fabric.totalTrafficGbps;
+  out["cluster:cpu"] = snap.totals.cpuUsagePct;
+  out["cluster:vram"] =
+    snap.totals.vramTotalBytes > 0 ? (snap.totals.vramUsedBytes / snap.totals.vramTotalBytes) * 100 : 0;
+  out["cluster:power"] = snap.totals.powerDrawW;
+
+  for (const l of snap.fabric.links) {
+    out[`link:${l.id}:ab`] = l.aToBGbps;
+    out[`link:${l.id}:ba`] = l.bToAGbps;
+  }
+
+  return out;
+}
+
 export class HistoryStore {
   private ts: number[] = [];
   private series = new Map<string, Ring>();
@@ -79,43 +131,7 @@ export class HistoryStore {
   record(snap: ClusterSnapshot): void {
     this.written.clear();
 
-    for (const n of snap.nodes) {
-      const p = (m: (typeof NODE_METRICS)[number], v: number) => this.put(`${n.id}:${m}`, v);
-      if (n.status !== "online") {
-        // Keep the series present but empty for this tick: the chart shows a
-        // gap rather than a misleading zero or a shifted line.
-        for (const m of NODE_METRICS) p(m, NaN);
-        continue;
-      }
-      p("cpu", n.cpu.usagePct);
-      p("mem", n.memory.totalBytes > 0 ? (n.memory.usedBytes / n.memory.totalBytes) * 100 : 0);
-      p("gpu", n.gpu?.utilPct ?? 0);
-      p("vram", n.gpu && n.gpu.vramTotalBytes > 0 ? (n.gpu.vramUsedBytes / n.gpu.vramTotalBytes) * 100 : 0);
-      p("temp", n.thermal.maxC ?? NaN);
-      p("power", n.gpu?.powerDrawW ?? NaN);
-
-      let rx = 0;
-      let tx = 0;
-      for (const port of n.fabric.ports) {
-        rx += ((port.rdmaRxBps + port.tcpRxBps) * 8) / 1e9;
-        tx += ((port.rdmaTxBps + port.tcpTxBps) * 8) / 1e9;
-      }
-      p("fabricRx", Math.round(rx * 100) / 100);
-      p("fabricTx", Math.round(tx * 100) / 100);
-    }
-
-    this.put("cluster:traffic", snap.fabric.totalTrafficGbps);
-    this.put("cluster:cpu", snap.totals.cpuUsagePct);
-    this.put(
-      "cluster:vram",
-      snap.totals.vramTotalBytes > 0 ? (snap.totals.vramUsedBytes / snap.totals.vramTotalBytes) * 100 : 0
-    );
-    this.put("cluster:power", snap.totals.powerDrawW);
-
-    for (const l of snap.fabric.links) {
-      this.put(`link:${l.id}:ab`, l.aToBGbps);
-      this.put(`link:${l.id}:ba`, l.bToAGbps);
-    }
+    for (const [key, value] of Object.entries(historySample(snap))) this.put(key, value);
 
     // Anything not written this tick (a removed node, a link that vanished)
     // still advances, so every series matches the timeline length exactly.
