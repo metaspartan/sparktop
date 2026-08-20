@@ -1,0 +1,23 @@
+node_modules/
+dist/
+build/
+*.log
+.DS_Store
+.env
+.env.*
+!.env.example
+
+# Runtime state — contains encrypted SSH credentials. Never commit.
+config/nodes.json
+config/*.key
+data/
+
+# SSH keys
+*.pem
+id_ed25519*
+id_rsa*
+sparktop_key*
+
+.vite/
+coverage/
+*.tsbuildinfo

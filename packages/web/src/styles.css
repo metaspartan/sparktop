@@ -1,0 +1,214 @@
+@import "tailwindcss";
+@import "uplot/dist/uPlot.min.css";
+
+/*
+ * Theme tokens.
+ *
+ * Both modes are selected rather than derived: the dark values are their own
+ * steps chosen against the dark surface, not an inversion of the light ones.
+ * Dark is declared twice — once under the OS media query and once under an
+ * explicit [data-theme] stamp — so the in-app toggle wins in both directions.
+ */
+:root {
+  color-scheme: light;
+
+  --surface-0: #f9f9f7; /* page plane */
+  --surface-1: #fcfcfb; /* card / chart surface */
+  --surface-2: #f2f2ee; /* recessed rows, table headers */
+  --surface-hover: #ecece6;
+
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #898781;
+
+  --border: rgba(11, 11, 11, 0.1);
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+
+  /* Categorical series, assigned in fixed order and never cycled. */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #4a3aa7;
+  --series-8: #e34948;
+
+  /* Status is reserved and never reused as a series color. */
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  --status-serious: #ec835a;
+  --status-critical: #d03b3b;
+
+  --accent: #2a78d6;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+
+    --surface-0: #0d0d0d;
+    --surface-1: #1a1a19;
+    --surface-2: #232322;
+    --surface-hover: #2c2c2a;
+
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #898781;
+
+    --border: rgba(255, 255, 255, 0.1);
+    --grid: #2c2c2a;
+    --axis: #383835;
+
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --series-6: #008300;
+    --series-7: #9085e9;
+    --series-8: #e66767;
+
+    --accent: #3987e5;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --surface-0: #0d0d0d;
+  --surface-1: #1a1a19;
+  --surface-2: #232322;
+  --surface-hover: #2c2c2a;
+
+  --text-primary: #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted: #898781;
+
+  --border: rgba(255, 255, 255, 0.1);
+  --grid: #2c2c2a;
+  --axis: #383835;
+
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #008300;
+  --series-7: #9085e9;
+  --series-8: #e66767;
+
+  --accent: #3987e5;
+}
+
+/* Expose tokens to Tailwind so utilities like bg-surface-1 exist. */
+@theme inline {
+  --color-surface-0: var(--surface-0);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-hover: var(--surface-hover);
+  --color-ink: var(--text-primary);
+  --color-ink-secondary: var(--text-secondary);
+  --color-ink-muted: var(--text-muted);
+  --color-edge: var(--border);
+  --color-grid: var(--grid);
+  --color-axis: var(--axis);
+  --color-good: var(--status-good);
+  --color-warning: var(--status-warning);
+  --color-serious: var(--status-serious);
+  --color-critical: var(--status-critical);
+  --color-accent: var(--accent);
+  --color-series-1: var(--series-1);
+  --color-series-2: var(--series-2);
+  --color-series-3: var(--series-3);
+  --color-series-4: var(--series-4);
+
+  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--surface-0);
+  color: var(--text-primary);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Columns of figures must align; standalone values keep proportional figures. */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * Skip layout and paint for node cards scrolled out of view. With several
+ * Sparks on screen these are the heaviest part of a tick — each holds two live
+ * charts plus a process table — and a card nobody is looking at does not need
+ * either. contain-intrinsic-size keeps the scrollbar stable while a card is
+ * skipped.
+ */
+.card-lazy {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 620px;
+}
+
+/* uPlot chrome, themed. */
+.u-axis,
+.u-legend {
+  color: var(--text-muted);
+}
+.u-legend {
+  font-size: 11px;
+}
+
+/*
+ * uPlot sets an explicit pixel width on .uplot. Forcing width:100% here would
+ * desynchronise that from the canvas and stretch the plot; instead the React
+ * wrapper drives setSize from a ResizeObserver, and this only stops a
+ * momentarily oversized canvas from widening its container (which would
+ * otherwise feed back and prevent the chart from ever shrinking).
+ */
+.uplot {
+  max-width: 100%;
+}
+
+.u-tooltip {
+  position: absolute;
+  z-index: 20;
+  pointer-events: none;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.18);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Respect a reduced-motion preference: transitions here are decorative. */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--axis);
+  border-radius: 5px;
+}

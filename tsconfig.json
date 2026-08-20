@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "jsx": "react-jsx",
+    "allowJs": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noFallthroughCasesInSwitch": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "types": ["bun"],
+    "baseUrl": ".",
+    "paths": {
+      "@sparktop/core": ["packages/core/src/index.ts"],
+      "@sparktop/core/*": ["packages/core/src/*"]
+    }
+  },
+  "include": ["packages/*/src/**/*.ts", "packages/*/src/**/*.tsx"],
+  "exclude": ["node_modules", "**/dist"]
+}

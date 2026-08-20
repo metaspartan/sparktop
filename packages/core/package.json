@@ -1,0 +1,21 @@
+{
+  "name": "@sparktop/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": {
+      "browser": "./src/client.ts",
+      "default": "./src/index.ts"
+    },
+    "./client": "./src/client.ts",
+    "./*": "./src/*"
+  },
+  "dependencies": {
+    "ssh2": "^1.17.0"
+  },
+  "devDependencies": {
+    "@types/ssh2": "^1.15.1"
+  }
+}

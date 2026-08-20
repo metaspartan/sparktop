@@ -1,0 +1,51 @@
+# sparktop — multi-node DGX Spark monitoring.
+#
+# Collection is agentless: this container SSHes into each node, so it can run on
+# one of the Sparks, on another machine, or anywhere with network reach.
+#
+#   1. cp .env.example .env   and set SPARKTOP_SECRET
+#   2. put an SSH private key at ./config/id_ed25519 (or edit the mount below)
+#   3. docker compose up -d   then open http://localhost:5757
+
+services:
+  sparktop:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ghcr.io/metaspartan/sparktop:latest
+    container_name: sparktop
+    restart: unless-stopped
+    ports:
+      - "${SPARKTOP_PORT:-5757}:5757"
+    environment:
+      # Nodes to monitor. Either list them here, or manage them at runtime
+      # through the API and leave this unset.
+      SPARKTOP_NODES: "${SPARKTOP_NODES:-}"
+      SPARKTOP_SSH_KEY: "${SPARKTOP_SSH_KEY:-/config/id_ed25519}"
+      # Required only when storing passwords rather than keys.
+      SPARKTOP_SECRET: "${SPARKTOP_SECRET:-}"
+      # Optional bearer token protecting the API and WebSocket.
+      SPARKTOP_TOKEN: "${SPARKTOP_TOKEN:-}"
+      SPARKTOP_FAST_MS: "${SPARKTOP_FAST_MS:-1000}"
+      SPARKTOP_SLOW_MS: "${SPARKTOP_SLOW_MS:-10000}"
+    volumes:
+      # Node registry and SSH key. Keys are read-only to the container.
+      - ./config:/config
+    healthcheck:
+      test:
+        - CMD
+        - bun
+        - -e
+        - "fetch('http://127.0.0.1:5757/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    # The collector only makes outbound SSH connections and serves HTTP.
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp

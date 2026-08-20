@@ -1,0 +1,15 @@
+{
+  "name": "@sparktop/tui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": { "sparktop": "./src/index.ts" },
+  "scripts": {
+    "start": "bun src/index.ts",
+    "build": "bun build src/index.ts --target=bun --outfile dist/sparktop.js --minify",
+    "compile": "bun build src/index.ts --compile --outfile dist/sparktop"
+  },
+  "dependencies": {
+    "@sparktop/core": "workspace:*"
+  }
+}

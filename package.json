@@ -1,0 +1,28 @@
+{
+  "name": "sparktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Realtime TUI + web dashboard for multi-node NVIDIA DGX Spark clusters, with 400G ConnectX-7 fabric telemetry",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/metaspartan/sparktop.git" },
+  "workspaces": ["packages/*"],
+  "type": "module",
+  "engines": { "bun": ">=1.1.0" },
+  "scripts": {
+    "dev": "bun run --cwd packages/server dev",
+    "dev:web": "bun run --cwd packages/web dev",
+    "build": "bun run build:web && bun run build:server",
+    "build:web": "bun run --cwd packages/web build",
+    "build:server": "bun run --cwd packages/server build",
+    "tui": "bun run --cwd packages/tui start",
+    "start": "bun run --cwd packages/server start",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "bun test",
+    "scan": "bun run scan:osv",
+    "scan:osv": "osv-scanner scan source -r ."
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.14",
+    "typescript": "^5.7.2"
+  }
+}
