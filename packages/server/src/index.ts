@@ -120,8 +120,16 @@ const MIME: Record<string, string> = {
   ".json": "application/json; charset=utf-8",
   ".svg": "image/svg+xml",
   ".png": "image/png",
+  ".webp": "image/webp",
+  ".avif": "image/avif",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
   ".ico": "image/x-icon",
   ".woff2": "font/woff2",
+  ".woff": "font/woff",
+  ".map": "application/json; charset=utf-8",
+  ".txt": "text/plain; charset=utf-8",
 };
 
 /** Serve the built SPA, falling back to index.html for client-side routes. */

@@ -14,7 +14,13 @@ Guidance:
 - WebP is preferred for size. PNG works too — change the extension in
   `packages/web/src/components/VariantIcon.tsx` (`photoUrl`) if you use one.
 
-Nothing is required here. When a file is missing the UI falls back to the
-built-in vector icon, which is why the repository ships no product photography:
-manufacturer images carry their own licensing, and vectors scale and theme
-better at icon size.
+The eight images currently here were produced with `scripts/split-variants.py`,
+which trims each source to the chassis and writes a 320px-wide WebP. Together
+they come to about 92 KB and are lazy-loaded.
+
+Nothing is strictly required: when a file is missing the UI falls back to the
+built-in vector icon for that variant, so a checkout without imagery still
+distinguishes hardware.
+
+Note that these are manufacturer product photographs. If you fork this project
+for redistribution, check that you are comfortable with that.

@@ -76,7 +76,7 @@ export function NodeCard({
             <VariantIcon
               variant={node.info.variant}
               title={node.info.variantName}
-              width={44}
+              width={58}
             />
           )}
           <span className="flex min-w-0 flex-col leading-tight">

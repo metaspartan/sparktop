@@ -29,6 +29,7 @@ Requires Pillow:  pip install pillow
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -136,9 +137,57 @@ def trim(img: Image.Image, pad: int = 2) -> Image.Image:
 ALL_IDS = LEFT_COLUMN + RIGHT_COLUMN
 
 
+def match_variant(stem: str) -> str | None:
+    """
+    Resolve a filename stem to a variant id.
+
+    Matching is on whole tokens, not substrings. A bare substring test looks
+    convenient until it is pointed at a real Downloads folder, where short ids
+    like "hp" and "msi" appear inside dozens of unrelated names and quietly
+    overwrite each other. Tokens keep `asus.png`, `2-asus.jpg` and
+    `spark_asus_front.png` working while rejecting `screencapture-graph.png`.
+    """
+    tokens = [t for t in re.split(r"[^a-z0-9]+", stem.lower()) if t]
+    if not tokens:
+        return None
+    # An exact filename wins outright.
+    if len(tokens) == 1 and tokens[0] in ALL_IDS:
+        return tokens[0]
+    for variant in ALL_IDS:
+        if variant in tokens:
+            return variant
+    return None
+
+
+def safe(text: str) -> str:
+    """Render a filename that the active console encoding can actually print."""
+    enc = sys.stdout.encoding or "utf-8"
+    return text.encode(enc, errors="replace").decode(enc, errors="replace")
+
+
+def already_transparent(img: Image.Image) -> bool:
+    """
+    True when the image arrives with its background already knocked out.
+
+    Worth detecting, because running the flood fill anyway would be actively
+    destructive here: it samples the corners for a reference colour, and on a
+    cut-out PNG those are transparent black. Most of these chassis are
+    near-black too, so the fill would march straight through the hardware and
+    erase it.
+    """
+    if img.mode != "RGBA":
+        return False
+    w, h = img.size
+    corners = [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)]
+    return all(img.getpixel(c)[3] < TRIM_ALPHA_FLOOR for c in corners)
+
+
 def process_one(img: Image.Image, name: str, out_dir: Path, width: int, tolerance: int) -> None:
-    """Knock out the background, trim, downscale and write a variant icon."""
-    cut = trim(knock_out_background(img, tolerance))
+    """Knock out the background if needed, then trim, downscale and write."""
+    if already_transparent(img):
+        cut = trim(img)
+    else:
+        cut = trim(knock_out_background(img, tolerance))
     if cut.width > width:
         ratio = width / cut.width
         cut = cut.resize((width, max(1, round(cut.height * ratio))), Image.LANCZOS)
@@ -159,23 +208,41 @@ def run_singles(src_dir: Path, out_dir: Path, width: int, tolerance: int) -> int
         print(f"No images found in {src_dir}")
         return 1
 
+    # A file named exactly for its variant beats one that merely mentions it.
+    # Without this, alphabetical order lets `nvidia-poster.png` claim the slot
+    # before `nvidia.png` is even reached.
+    candidates.sort(key=lambda p: (0 if p.stem.lower() in ALL_IDS else 1, p.name.lower()))
+
     out_dir.mkdir(parents=True, exist_ok=True)
     written = 0
     unmatched: list[Path] = []
+    seen: set[str] = set()
     for path in candidates:
-        stem = path.stem.lower()
-        name = next((v for v in ALL_IDS if v in stem), None)
+        name = match_variant(path.stem)
         if not name:
             unmatched.append(path)
             continue
+        if name in seen:
+            # Two files claim the same variant; keep the first and say so
+            # rather than silently overwriting.
+            print(f"  {name:9s} already taken, ignoring {safe(path.name)}")
+            continue
+        seen.add(name)
         process_one(Image.open(path).convert("RGBA"), name, out_dir, width, tolerance)
         written += 1
 
     if unmatched:
-        print("\nSkipped (filename does not contain a variant id):")
-        for p in unmatched:
-            print(f"  {p.name}")
-        print(f"  Expected one of: {', '.join(ALL_IDS)}")
+        # Pointing this at a general folder (Downloads) is normal, so only
+        # summarise. Filenames are sanitised because the Windows console is
+        # cp1252 and arbitrary downloads carry characters it cannot encode.
+        print(f"\nIgnored {len(unmatched)} file(s) whose name contains no variant id.")
+        for p in unmatched[:5]:
+            print(f"  {safe(p.name)}")
+        if len(unmatched) > 5:
+            print(f"  ... and {len(unmatched) - 5} more")
+        missing = [v for v in ALL_IDS if not (out_dir / f"{v}.webp").exists()]
+        if missing:
+            print(f"  Still missing: {', '.join(missing)}")
 
     print(f"\nWrote {written} variant images to {out_dir}")
     print("Rebuild the web UI to pick them up:  bun run build:web")

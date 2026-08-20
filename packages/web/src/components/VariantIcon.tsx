@@ -7,11 +7,10 @@
  * diamond lattice, ASUS's vertical ridges, and so on) rather than showing a
  * generic box with a logo.
  *
- * These are drawn rather than photographed: vector scales cleanly at 24px,
- * costs a few hundred bytes, adapts to light and dark, and carries no
- * third-party image licensing. If you would rather use product photography,
- * drop a file at `public/variants/<id>.webp` and it is used instead — see
- * `photoUrl` below.
+ * A photo at `public/variants/<id>.webp` is used when present; the drawn
+ * vector below is the fallback for any variant without one, so the UI still
+ * distinguishes hardware in a fresh checkout that ships no imagery. Populate
+ * the directory with `scripts/split-variants.py`.
  */
 
 import { useState } from "react";
@@ -159,17 +158,22 @@ export function VariantIcon({
   const height = Math.round((width / 48) * 26);
 
   if (usePhoto) {
+    /*
+     * Height is left to the image's own aspect rather than forced into the
+     * vector icon's box. The chassis photos are about 2.9:1 while the drawn
+     * icon is 1.85:1, so pinning both to one box would letterbox every photo.
+     */
     return (
       <img
         src={photoUrl(variant)}
         alt=""
         aria-hidden="true"
-        width={width}
-        height={height}
         title={title}
+        loading="lazy"
+        decoding="async"
         onError={() => setUsePhoto(false)}
-        className={`shrink-0 object-contain ${className}`}
-        style={{ width, height }}
+        className={`shrink-0 ${className}`}
+        style={{ width, height: "auto", maxHeight: height * 1.15 }}
       />
     );
   }
