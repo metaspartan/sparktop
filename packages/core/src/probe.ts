@@ -114,6 +114,16 @@ fi
 S hwmon
 grep -H . /sys/class/hwmon/hwmon*/name /sys/class/hwmon/hwmon*/temp*_input /sys/class/hwmon/hwmon*/temp*_label /sys/class/hwmon/hwmon*/temp*_crit 2>/dev/null
 
+S cts
+# Counter timestamp, captured immediately before the byte counters below.
+#
+# Rates are (delta bytes / delta time), so the clock must be read next to the
+# counters it describes. Timestamping at the top of the script instead makes
+# delta-t the gap between script *starts* while delta-bytes spans the gap
+# between counter *reads* — and since probe duration varies by 150ms or more
+# poll to poll, that mismatch swings a 1s sample by several hundred percent.
+date +%s%3N
+
 S netdev
 cat /proc/net/dev 2>/dev/null
 
@@ -139,6 +149,12 @@ if command -v ethtool >/dev/null 2>&1; then
     ethtool -S "\$n" 2>/dev/null | grep -E 'vport_(rdma_)?unicast_(bytes|packets)' | tr -d ' '
   done
 fi
+
+S cte
+# Closing timestamp for the counter block. The collector uses the midpoint of
+# cts..cte as the instant these counters describe, so a slow read is centred
+# rather than attributed to whichever end of the window it started from.
+date +%s%3N
 `;
 
 /**

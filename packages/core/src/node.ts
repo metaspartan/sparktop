@@ -373,6 +373,25 @@ export class NodeCollector extends EventEmitter {
   private buildSnapshot(s: Record<string, string>, probeMs: number): NodeSnapshot {
     const ts = Number((s.ts ?? "").trim()) || Date.now();
 
+    /*
+     * The instant the byte counters describe.
+     *
+     * Deliberately not `ts`: that is stamped at the top of the probe, while the
+     * counters are read near the end, and probe duration varies enough poll to
+     * poll that using it makes delta-t disagree with the window the bytes were
+     * actually accumulated over. The probe brackets the counter block with
+     * cts/cte and this takes the midpoint, so throughput is centred on the real
+     * sampling window instead of swinging with script runtime.
+     */
+    const cts = Number((s.cts ?? "").trim());
+    const cte = Number((s.cte ?? "").trim());
+    const counterTs =
+      Number.isFinite(cts) && cts > 0 && Number.isFinite(cte) && cte >= cts
+        ? Math.round((cts + cte) / 2)
+        : Number.isFinite(cts) && cts > 0
+          ? cts
+          : ts;
+
     // --- CPU -------------------------------------------------------------
     const cpuTimes = parseCpuTimes(s.stat);
     const usagePct = cpuPctBetween(this.prevCpu, cpuTimes.all);
@@ -406,9 +425,9 @@ export class NodeCollector extends EventEmitter {
     const fabricNetdevs = new Set(fabricMap.values());
     const ports = this.buildFabricPorts(
       { fabricMap, fabricHwmon, fabricSys, ethtool, netCounters, sensors },
-      ts
+      counterTs
     );
-    const interfaces = this.buildInterfaces(netCounters, carrier, fabricNetdevs, ts);
+    const interfaces = this.buildInterfaces(netCounters, carrier, fabricNetdevs, counterTs);
 
     /*
      * Identify the machine from DMI rather than by pattern-matching hostnames.
