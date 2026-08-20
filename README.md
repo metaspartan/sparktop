@@ -4,7 +4,9 @@
 
 **Realtime TUI and web dashboard for multi-node NVIDIA DGX Spark clusters.**
 
-Built for GB10. Sees the 200G ConnectX-7 interconnect that ordinary tools miss.
+One place to watch every Spark you own — the GPUs, the containers, the models
+they are serving, and the ConnectX-7 fabric between them that ordinary network
+tools report as nearly idle.
 
 [Quick start](#quick-start) · [Why RDMA counters](#why-the-usual-network-stats-lie) · [TUI](#terminal-ui) · [API](#http-api) · [Configuration](#configuration)
 
@@ -16,6 +18,91 @@ Built for GB10. Sees the 200G ConnectX-7 interconnect that ordinary tools miss.
 
 ---
 
+## Quick start
+
+You need one or more DGX Sparks reachable over SSH, and either Docker or
+[Bun](https://bun.sh) 1.1+ on the machine you run this from. Nothing gets
+installed on the Sparks themselves.
+
+```bash
+git clone https://github.com/metaspartan/sparktop.git && cd sparktop
+./scripts/setup.sh ubuntu@10.0.0.11 ubuntu@10.0.0.12
+```
+
+Then open <http://localhost:5757>.
+
+That one command generates an SSH key, authorises it on each node — asking for
+each node's password once, and never again — checks what each one reports, writes
+the node registry and starts up:
+
+```
+sparktop setup
+
+  ✓ 2 node(s): ubuntu@10.0.0.11 ubuntu@10.0.0.12
+  ✓ Generated ./config/id_ed25519
+  ✓ ubuntu@10.0.0.11 authorised
+  ✓ ubuntu@10.0.0.12 authorised
+
+  Checking what each node reports:
+  ✓ spark-01 — DGX Spark · NVIDIA GB10 · 4 RDMA ports · docker
+  ✓ spark-02 — DGX Spark · NVIDIA GB10 · 4 RDMA ports · docker
+  ✓ Wrote ./config/nodes.json
+```
+
+Run it with no arguments to be prompted for the node list instead. Re-running is
+safe — nodes that already trust the key are skipped. Pass `--docker` or `--bun`
+to force how it runs, or `--no-start` to configure without launching.
+
+Prefer the terminal? `bun run tui` gives you [the same data](#terminal-ui)
+without a browser.
+
+<details>
+<summary><b>Setting it up by hand</b> — Docker Compose, plain Bun, or no config file</summary>
+
+**Docker Compose**
+
+```bash
+cp .env.example .env                       # set SPARKTOP_NODES
+ssh-keygen -t ed25519 -f ./config/id_ed25519 -N ""
+for h in 10.0.0.11 10.0.0.12; do ssh-copy-id -i ./config/id_ed25519.pub ubuntu@$h; done
+SPARKTOP_COMMIT=$(git rev-parse HEAD) docker compose up -d
+```
+
+The image is multi-arch (`linux/arm64` + `linux/amd64`), so it runs on a Spark or
+on anything else that can reach them.
+
+**Without Docker** — requires [Bun](https://bun.sh) 1.1+:
+
+```bash
+bun install && bun run build:web && bun run start
+```
+
+**No config file at all.** Start with no nodes and the web UI walks you through
+adding them, verifying each over SSH before it is saved. Or declare them in the
+environment:
+
+```bash
+export SPARKTOP_NODES="ubuntu@10.0.0.11,ubuntu@10.0.0.12"
+export SPARKTOP_SSH_KEY=/config/id_ed25519
+```
+</details>
+
+> The setup script targets Linux and macOS, which is what the Sparks run. On
+> Windows, use Docker Desktop or WSL.
+
+### Nothing is installed on the Sparks
+
+sparktop is **agentless**. It runs in one place and reads the others over SSH, so
+adding a node means authorising a key — which setup does for you. Nothing is
+copied to a Spark, no service runs on it, and uninstalling means deleting one
+line from `~/.ssh/authorized_keys`.
+
+It needs no privileges: no root, no passwordless sudo. The only thing worth
+checking per node is that the login user is in the `docker` group, which setup
+reports. Without it, everything except container metrics still works.
+
+Non-Spark NVIDIA hosts work too — you simply get no fabric section for them.
+
 ## What it does
 
 `sparktop` watches a fleet of DGX Sparks from one place — in the terminal, in a browser, or both — and answers the questions a per-machine tool cannot:
@@ -23,9 +110,8 @@ Built for GB10. Sees the 200G ConnectX-7 interconnect that ordinary tools miss.
 - **Which Sparks are cabled to which**, over which ports, and how much is moving in each direction *right now*.
 - **What is holding GPU memory** — per-process VRAM, mapped back to the container that owns it.
 - **What is running across more than one node** — tensor-parallel jobs are detected from container topology, with ranks and aggregate VRAM.
+- **What each model is actually doing** — decode and prefill throughput, time to first token, queue depth and KV cache pressure, read from whichever engine is serving.
 - **Everything you would expect**: GPU utilisation, unified memory, per-core CPU, every thermal sensor, disks, Docker containers, and network interfaces.
-
-It is **agentless**. Nothing is installed on the Sparks; `sparktop` connects over SSH and reads sysfs, `nvidia-smi`, `ethtool` and `docker` as an ordinary user. No root, no passwordless sudo, no daemon on the nodes.
 
 ## Why the usual network stats lie
 
@@ -46,13 +132,19 @@ Nothing on a Spark reports "this cable reaches that machine". `sparktop` infers 
 
 Where three or more ports share a subnet there is a switch in the middle, and per-peer traffic genuinely cannot be attributed from NIC counters. `sparktop` says so rather than inventing links.
 
-### What it will not tell you
+### One cable is already the whole link
 
-Some notes on DGX Spark networking, since the hardware is easy to misread:
+DGX Spark networking is easy to misread, and `sparktop` reports it the way the
+hardware actually behaves:
 
-- **One QSFP cable already gives you the full 200GbE link.** Adding a second cable does not increase bandwidth. ([NVIDIA: Connect Two Sparks](https://build.nvidia.com/spark/connect-two-sparks))
-- On GB10 that single cable **presents as two RDMA interfaces** of roughly 100 Gb/s each. Reaching the full link speed means using both — `NCCL_IB_MERGE_NICS=1` — not adding hardware.
-- `sparktop` will never suggest that more cables means more bandwidth.
+- **A single QSFP cable gives you the full 200GbE link.** Adding a second cable
+  does not add bandwidth. ([NVIDIA: Connect Two Sparks](https://build.nvidia.com/spark/connect-two-sparks))
+- That one cable **presents as two RDMA interfaces** of roughly 100 Gb/s each,
+  because each port sits behind its own PCIe Gen5 x4 link. Reaching the full
+  200 Gb/s means using both — `NCCL_IB_MERGE_NICS=1` — not buying more cable.
+- So a two-Spark pair shows a **capacity of ~201.6 Gb/s across two links**, not
+  400G. Advertised link speed is a signalling rate; `sparktop` shows the rate the
+  PCIe attachment can actually sustain.
 
 ## Hardware variants
 
@@ -77,102 +169,7 @@ product_name    GX10
 product_family  DGX Spark
 ```
 
-Every node card shows its chassis, so a mixed rack is readable at a glance. The images live in `packages/web/public/variants/<id>.webp`; any variant without one falls back to a drawn vector icon, so the UI still distinguishes hardware if you strip them. `scripts/split-variants.py` regenerates them from your own sources.
-
-## Requirements
-
-- One or more DGX Spark (GB10) machines, reachable over SSH. Non-Spark NVIDIA
-  hosts work too — you simply get no fabric section for them.
-- An SSH user on each node. No root and no passwordless sudo required; add the
-  user to the `docker` group if you want container metrics.
-- To run sparktop itself: Docker, or [Bun](https://bun.sh) 1.1+. The setup
-  script below picks whichever it finds.
-
-## Quick start
-
-One command, run once, from anywhere that can reach your Sparks over SSH — one
-of the Sparks itself is fine:
-
-```bash
-git clone https://github.com/metaspartan/sparktop.git && cd sparktop
-./scripts/setup.sh ubuntu@10.0.0.11 ubuntu@10.0.0.12
-```
-
-That generates an SSH key, authorises it on each node (asking for each node's
-password once, and never again), verifies what each one reports, writes the
-node registry, and starts sparktop. Then open <http://localhost:5757>.
-
-Run it with no arguments to be prompted for the node list instead. It is safe to
-re-run: nodes that already trust the key are skipped.
-
-```
-sparktop setup
-
-  ✓ 2 node(s): ubuntu@10.0.0.11 ubuntu@10.0.0.12
-  ✓ Generated ./config/id_ed25519
-  ✓ ubuntu@10.0.0.11 authorised
-  ✓ ubuntu@10.0.0.12 authorised
-
-  Checking what each node reports:
-  ✓ spark-01 — DGX Spark · NVIDIA GB10 · 4 RDMA ports · docker
-  ✓ spark-02 — DGX Spark · NVIDIA GB10 · 4 RDMA ports · docker
-  ✓ Wrote ./config/nodes.json
-```
-
-Useful flags: `--docker` or `--bun` to force how it runs, `--no-start` to
-configure without launching.
-
-### There is nothing to install on the Sparks
-
-sparktop is **agentless**. It runs in one place and reads the others over SSH,
-so adding a node means authorising a key — which the setup script does. Nothing
-is copied to a Spark, no service runs on it, and removing sparktop means
-deleting one key from `~/.ssh/authorized_keys`.
-
-The only thing worth checking per node is that the login user is in the `docker`
-group, which the setup script reports. Without it everything except container
-metrics still works.
-
-### Doing it by hand
-
-<details>
-<summary>Docker Compose</summary>
-
-```bash
-cp .env.example .env                       # set SPARKTOP_NODES
-ssh-keygen -t ed25519 -f ./config/id_ed25519 -N ""
-for h in 10.0.0.11 10.0.0.12; do ssh-copy-id -i ./config/id_ed25519.pub ubuntu@$h; done
-SPARKTOP_COMMIT=$(git rev-parse HEAD) docker compose up -d
-```
-
-The image is multi-arch (`linux/arm64` + `linux/amd64`), so it runs on a Spark
-or on anything else that can reach them.
-</details>
-
-<details>
-<summary>Without Docker</summary>
-
-Requires [Bun](https://bun.sh) 1.1+.
-
-```bash
-bun install && bun run build:web && bun run start
-```
-</details>
-
-<details>
-<summary>No config file at all</summary>
-
-Start with no nodes and the web UI walks you through adding them, verifying each
-over SSH before it is saved. Or declare them in the environment:
-
-```bash
-export SPARKTOP_NODES="ubuntu@10.0.0.11,ubuntu@10.0.0.12"
-export SPARKTOP_SSH_KEY=/config/id_ed25519
-```
-</details>
-
-> The setup script targets Linux and macOS, which is what the Sparks run. On
-> Windows, use Docker Desktop or WSL.
+Every node card shows its chassis, so a mixed rack is readable at a glance. The images live in `packages/web/public/variants/<id>.webp`. Hardware that cannot be identified shows no icon rather than a stand-in — an icon that does not match the machine in the rack reads as identification. `scripts/split-variants.py` regenerates the set from your own sources.
 
 ## Terminal UI
 
@@ -189,19 +186,36 @@ bun packages/tui/src/index.ts --server http://localhost:5757
 ```
 
 ```
-sparktop │ 2/2 nodes                                              21:12:18
-fabric 16.3 Gbps/800G · vram 200 GB/243 GB · cpu 18% · pwr 132 W · temp 89°C
+sparktop │ 2/2 nodes                                                        14:25:09
+fabric 1.32 Gbps/201.6G · vram 202 GB/243 GB · cpu 11% · pwr 88.5 W · temp 89°C
+  · ctr 2 · tok/s 36.9 · req 1
 
-── Nodes ──────────────────────────────────────────────────────────────────
-● spark-01 10.0.0.11 [ASUS Ascent GX10]  225ms
-  GPU  ██████████████████████▊·  96%   96%                          ███
-  VRAM ███████████████████▊····  82%   100 GB/122 GB                ▇▇▇
-  CPU  ███▍····················  18%   18%                          ▁▂▂
-  temp 89°C  pwr 65.8 W  net ↓8.15 Gbps ↑8.15 Gbps  up 5h 1m
+── Nodes ────────────────────────────────────────────────────────────────────────
+● spark-01 10.0.0.11 [ASUS Ascent GX10]  281ms
+  GPU  ██████████████████████▊·  95% 95%                              █████
+  VRAM ███████████████████▉····  83% 101 GB/122 GB                    ▇▇▇▇▇
+  CPU  ██▋·····················  11% 11%                              ▂▂▂▂▂
+  MEM  ██████████████████████▌·  94% 115 GB/122 GB                    █████
+  temp 89°C  pwr 43.8 W  net ↓1.32 Gbps ↑1.32 Gbps  up 21h 23m
 
-── Interconnect ───────────────────────────────────────────────────────────
-  spark-01:enp1s0f1np1    ⇄ spark-02:enp1s0f1np1    ▏···  16.3 Gbps /200G ✓
-  spark-01:enP2p1s0f1np1  · spark-02:enP2p1s0f1np1  ····      0 Gbps /200G ✓
+● spark-02 10.0.0.12 [ASUS Ascent GX10]  273ms
+  GPU  ██████████████████████▊·  95% 95%                              █████
+  VRAM ███████████████████▉····  83% 101 GB/122 GB                    ▇▇▇▇▇
+  CPU  ██▋·····················  11% 11%                              ▂▂▂▂▂
+  MEM  ██████████████████████▏·  92% 112 GB/122 GB                    ▇▇▇▇▇
+  temp 89°C  pwr 44.6 W  net ↓1.32 Gbps ↑1.32 Gbps  up 21h 5m
+
+── Interconnect ─────────────────────────────────────────────────────────────────
+  spark-01:enp1s0f1np1    ⇄ spark-02:enp1s0f1np1    ▏······  2.64 Gbps /100.8G ✓
+  spark-01:enP2p1s0f1np1  · spark-02:enP2p1s0f1np1  ·······     0 Gbps /100.8G ✓
+
+── Inference ────────────────────────────────────────────────────────────────────
+  ● spark-01:8888     vLLM      36.9 tok/s  run 1  queue 0  served 838  kv 11%
+      deepseek-v4-flash-0731
+
+── Distributed workloads ────────────────────────────────────────────────────────
+  deepseek-ai/DeepSeek-V4-Flash-0731  ranks 2  vram 202 GB  traffic 2.64 Gbps
+    spark-01#0  spark-02#1
 ```
 
 Keys: `o` overview · `f` fabric · `p` processes · `c` containers · `←/→` select node · `space` pause · `q` quit.
@@ -284,18 +298,22 @@ the target accepts or rejects them, so the counter jumps by a burst and then
 sits still. Successive one-second readings alternate between far too high and
 zero — vLLM's own logger averages over ten seconds for exactly this reason.
 
-Latency comes
-from histograms, averaged over a rolling sixty-second window rather than the
-server's lifetime — dividing `_sum` by `_count` gives the mean since boot, which
-on a server that has served thousands of requests barely moves and says nothing
-about now. When nothing completed even in that window, the lifetime mean is
-shown rather than a dash.
+Latency comes from histograms, averaged over a rolling sixty-second window rather
+than the server's lifetime — dividing `_sum` by `_count` gives the mean since
+boot, which on a server that has handled thousands of requests barely moves and
+says nothing about now. The derived ratios, prefix hit rate and speculative
+acceptance, use the same window for the same reason.
+
+When nothing completed even in that window, the lifetime average is shown but
+**labelled and dimmed as such**, because a stale mean sitting beside a decode
+rate of zero would otherwise read as a live measurement.
 
 Two figures are easy to misread. **Prefill tok/s counts cached tokens**: a high
 prefix-hit rate (95%+ is common with a shared system prompt) means far less work
-was done than the number suggests. And **aggregate decode is not per-request
-speed** — a server producing 60 tok/s across four concurrent requests gives each
-of them about 15, which is what a user actually experiences; both are shown.
+was done than the number suggests — which is why the hit rate is shown next to
+it. And **aggregate decode is not per-request speed**: a server producing
+60 tok/s across four concurrent requests gives each of them about 15, which is
+what a user actually experiences. Both are shown.
 
 Where one logical server is reachable twice (behind a proxy, or on two ports) the
 duplicate is folded out of cluster totals, so a tensor-parallel job — where only
