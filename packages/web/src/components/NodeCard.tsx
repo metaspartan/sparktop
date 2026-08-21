@@ -256,7 +256,7 @@ function OverviewTab({ node, memPct }: { node: NodeSnapshot; memPct: number }) {
         {g && (
           <>
             <Row label="Driver" value={`${g.driverVersion}${g.cudaVersion ? ` · CUDA ${g.cudaVersion}` : ""}`} />
-            <Row label="SM clock" value={g.smClockMhz ? `${g.smClockMhz} MHz` : "—"} />
+            <ClockRow gpu={g} />
             <Row label="Power" value={fmtWatts(g.powerDrawW)} />
           </>
         )}
@@ -525,6 +525,45 @@ function HardwareTab({ node }: { node: NodeSnapshot }) {
           </p>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * SM clock, shown against the part's own ceiling.
+ *
+ * GB10 machines have a power-delivery fault that pins the GPU to a low clock
+ * while utilisation and power state carry on reading normal, so the clock is
+ * the only visible symptom. Flagged only while the GPU is working: a low clock
+ * on an idle part is correct, and colouring that would teach the eye to skip
+ * the case that matters.
+ */
+function ClockRow({ gpu }: { gpu: NonNullable<NodeSnapshot["gpu"]> }) {
+  if (!gpu.smClockMhz) return <Row label="SM clock" value="—" />;
+  const max = gpu.smClockMaxMhz;
+  const pct = max ? (gpu.smClockMhz / max) * 100 : null;
+  const declared = gpu.throttleReasons?.reasons.filter((r) => r !== "idle") ?? [];
+  const low = pct !== null && pct < 60 && gpu.utilPct >= 50;
+  const tone = !low ? "text-ink" : declared.length ? "text-[color:var(--status-warning)]" : "text-[color:var(--status-critical)]";
+
+  return (
+    <div className="flex items-baseline justify-between gap-3 text-[12px]">
+      <span className="shrink-0 text-ink-muted">SM clock</span>
+      <span
+        className={`truncate text-right font-medium ${tone}`}
+        title={
+          low
+            ? declared.length
+              ? `Reduced clock, reported reason: ${declared.join(", ")}.`
+              : "Clocked well below its ceiling under load with no throttle reason reported — see Alerts."
+            : max
+              ? `${pct!.toFixed(0)}% of the ${max} MHz ceiling.`
+              : ""
+        }
+      >
+        {gpu.smClockMhz} MHz
+        {max && <span className="font-normal text-ink-muted"> / {max}</span>}
+      </span>
     </div>
   );
 }

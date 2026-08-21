@@ -166,6 +166,20 @@ function header(snap: ClusterSnapshot, st: RenderState, W: number): string[] {
 const visible = (s: string): number => s.replace(/\x1b\[[0-9;]*m/g, "").length;
 
 /**
+ * Colour for an SM clock, judged against the part's own ceiling.
+ *
+ * Only flagged while the GPU is actually working: a low clock on an idle part
+ * is correct behaviour, and colouring it red would train the eye to ignore the
+ * one case that matters.
+ */
+function clockTone(g: NonNullable<NodeSnapshot["gpu"]>): (s: string) => string {
+  if (!g.smClockMhz || !g.smClockMaxMhz || g.utilPct < 50) return dim;
+  const pct = (g.smClockMhz / g.smClockMaxMhz) * 100;
+  if (pct >= 60) return dim;
+  return (g.throttleReasons?.reasons.filter((r) => r !== "idle").length ?? 0) > 0 ? C.warning : C.critical;
+}
+
+/**
  * Side-by-side trend charts.
  *
  * Three narrow charts read better than one wide one here: the questions are
@@ -469,7 +483,15 @@ function nodeBlock(n: NodeSnapshot, st: RenderState, W: number, d: Detail): stri
     const gpuPct = g?.utilPct ?? 0;
     const left = [
       `${dim("GPU")} ${bold(toneFor(gpuPct)(`${gpuPct.toFixed(0)}%`))}` +
-        dim(`  ${g?.smClockMhz ? `${g.smClockMhz} MHz  ` : ""}${fmtTemp(g?.temperatureC ?? null)}  ${fmtWatts(g?.powerDrawW)}`),
+        /*
+         * The clock is coloured against its own ceiling, not left as dim
+         * chrome. A GB10 pinned low is otherwise invisible here — utilisation
+         * and power state both keep reading normal.
+         */
+        (g?.smClockMhz
+          ? `  ${clockTone(g)(`${g.smClockMhz} MHz`)}${dim(g.smClockMaxMhz ? `/${g.smClockMaxMhz}` : "")}  `
+          : "  ") +
+          dim(`${fmtTemp(g?.temperatureC ?? null)}  ${fmtWatts(g?.powerDrawW)}`),
       ...gauge(gpuPct, gaugeW, gh, toneRgbFor(gpuPct)),
     ];
     const right = [

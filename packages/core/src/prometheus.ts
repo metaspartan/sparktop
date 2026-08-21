@@ -105,6 +105,17 @@ function nodeMetrics(e: Exposition, n: NodeSnapshot): void {
      * numbers to alert on; the derivation is documented in HELP so nobody
      * mistakes them for NVML's own.
      */
+    e.metric("sparktop_gpu_sm_clock_hertz", "gauge", "Current SM clock.", n.gpu.smClockMhz === null ? null : n.gpu.smClockMhz * 1e6, gl);
+    e.metric("sparktop_gpu_sm_clock_max_hertz", "gauge", "SM clock ceiling the part will boost to.", n.gpu.smClockMaxMhz === null ? null : n.gpu.smClockMaxMhz * 1e6, gl);
+    /*
+     * Exported so the silent-throttle case can be alerted on rather than only
+     * watched: a rule comparing sm_clock to sm_clock_max while utilisation is
+     * high and this is 0 catches a GB10 stuck by the power-delivery fault,
+     * which announces itself in no other metric.
+     */
+    if (n.gpu.throttleReasons) {
+      e.metric("sparktop_gpu_throttle_reasons", "gauge", "Count of active NVML clock-event reasons, excluding idle.", n.gpu.throttleReasons.reasons.filter((r) => r !== "idle").length, gl);
+    }
     e.metric("sparktop_gpu_memory_total_bytes", "gauge", "GPU memory total. On unified-memory parts this is the shared system pool.", n.gpu.vramTotalBytes, gl);
     e.metric("sparktop_gpu_memory_used_bytes", "gauge", "GPU memory in use. On unified-memory parts this is summed from live process allocations.", n.gpu.vramUsedBytes, gl);
   }

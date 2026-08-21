@@ -30,7 +30,8 @@ function node(id: string, label: string): NodeSnapshot {
     gpu: {
       name: "NVIDIA GB10", uuid: "u", driverVersion: "580", cudaVersion: "13", unifiedMemory: true,
       utilPct: 96, memUtilPct: null, temperatureC: 61, powerDrawW: 53, powerLimitW: 140,
-      smClockMhz: 2405, vramTotalBytes: 122e9, vramUsedBytes: 101e9, vramUsedIsDerived: true,
+      smClockMhz: 2405, smClockMaxMhz: 3003, throttleReasons: { mask: "0x0", reasons: [] },
+      vramTotalBytes: 122e9, vramUsedBytes: 101e9, vramUsedIsDerived: true,
       processes: [],
     },
     thermal: { sensors: [], maxC: 61 },

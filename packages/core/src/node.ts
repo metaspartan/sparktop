@@ -867,6 +867,8 @@ export class NodeCollector extends EventEmitter {
       powerDrawW: g.powerDrawW,
       powerLimitW: g.powerLimitW,
       smClockMhz: g.smClockMhz,
+      smClockMaxMhz: g.smClockMaxMhz,
+      throttleReasons: g.throttleReasons,
       vramTotalBytes,
       vramUsedBytes,
       vramUsedIsDerived: derived,

@@ -105,6 +105,16 @@ export interface GpuMetrics {
   powerDrawW: number | null;
   powerLimitW: number | null;
   smClockMhz: number | null;
+  /** Ceiling the part will boost to, from `clocks.max.sm`. */
+  smClockMaxMhz: number | null;
+  /**
+   * Why the driver says clocks are reduced, if it says anything.
+   *
+   * Null when NVML does not report it. An empty `reasons` with the clock far
+   * below `smClockMaxMhz` under load is the case worth surfacing: the part is
+   * slow and nothing is owning up to it.
+   */
+  throttleReasons: { mask: string; reasons: string[] } | null;
   /** Total VRAM. On unified parts this is the shared system pool. */
   vramTotalBytes: number;
   /** VRAM in use. On unified parts this is summed from live NVML processes,

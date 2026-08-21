@@ -274,6 +274,45 @@ Rates come from monotonic counters divided by measured wall time, not by the nom
 - **Heterogeneous CPU.** `lscpu` reports several models for the Cortex-X925 / A725 clusters; all are shown.
 - **NIC temperatures** are attributed to the right port through `/sys/class/infiniband/<dev>/device/hwmon`, since a Spark exposes four identically named `mlx5` chips.
 
+#### Silent low-clock detection
+
+GB10 machines have a reported fault where the USB-C power-delivery negotiation
+leaves the GPU pinned to a low SM clock — commonly a few hundred MHz against a
+3003 MHz ceiling — roughly halving inference throughput. It is hard to notice
+because nothing looks wrong: utilisation still reads high, the power state still
+reads P0, and NVML reports **no throttle reason at all**.
+
+`sparktop` raises an alert when four things hold at once, since each alone is
+ordinary:
+
+| Signal | Why it is needed |
+|---|---|
+| SM clock below ~45% of `clocks.max.sm` | Boost clocks sit under the ceiling routinely |
+| GPU utilisation ≥ 50% | A low clock on an idle part is correct |
+| Power draw under 35 W | A light workload also draws little |
+| No throttle reason reported | A real thermal or power cap announces itself |
+
+A declared reason downgrades this to a plain "reduced clock" note, because that
+is the GPU behaving correctly under a constraint rather than the silent fault.
+The SM clock is shown against its ceiling on every node card and in the terminal
+view, coloured only while the GPU is working.
+
+For alerting, `/metrics` exports `sparktop_gpu_sm_clock_hertz`,
+`sparktop_gpu_sm_clock_max_hertz` and `sparktop_gpu_throttle_reasons`:
+
+```
+sparktop_gpu_sm_clock_hertz / sparktop_gpu_sm_clock_max_hertz < 0.45
+  and sparktop_gpu_utilization_ratio > 0.5
+  and sparktop_gpu_throttle_reasons == 0
+```
+
+If it fires, check firmware first — NVIDIA and the partners have shipped USB-C PD
+controller updates:
+
+```bash
+sudo fwupdmgr refresh --force && sudo fwupdmgr get-upgrades
+```
+
 ## Inference monitoring
 
 sparktop finds the inference server on each node and reports tokens/sec,

@@ -182,6 +182,42 @@ export interface RawGpu {
   smClockMhz: number | null;
   memTotalBytes: number | null;
   memUsedBytes: number | null;
+  smClockMaxMhz: number | null;
+  throttleReasons: { mask: string; reasons: string[] } | null;
+}
+
+/**
+ * NVML's clock-event bitmask, as reported by `clocks_throttle_reasons.active`.
+ *
+ * Only the reasons worth acting on are named. The value matters less than
+ * whether it is zero: a GPU clocked far below its ceiling while reporting no
+ * reason at all is not throttling in any way the driver admits to, which is
+ * the signature of the GB10 power-negotiation fault rather than of a hot or
+ * power-capped part.
+ */
+const THROTTLE_BITS: [bigint, string][] = [
+  [1n << 0n, "idle"],
+  [1n << 1n, "applications clock setting"],
+  [1n << 2n, "software power cap"],
+  [1n << 3n, "hardware slowdown"],
+  [1n << 4n, "sync boost"],
+  [1n << 5n, "software thermal slowdown"],
+  [1n << 6n, "hardware thermal slowdown"],
+  [1n << 7n, "power brake slowdown"],
+  [1n << 8n, "display clock setting"],
+];
+
+/** Decode the mask into human-readable reasons. Returns null when unsupported. */
+export function parseThrottleMask(raw: string | undefined): { mask: string; reasons: string[] } | null {
+  const t = (raw ?? "").trim();
+  if (!t || t === "[N/A]" || t === "[Not Supported]") return null;
+  let value: bigint;
+  try {
+    value = BigInt(t.startsWith("0x") || t.startsWith("0X") ? t : `0x${t}`);
+  } catch {
+    return null;
+  }
+  return { mask: `0x${value.toString(16)}`, reasons: THROTTLE_BITS.filter(([b]) => (value & b) !== 0n).map(([, n]) => n) };
 }
 
 export function parseGpuQuery(body: string | undefined): RawGpu[] {
@@ -206,6 +242,13 @@ export function parseGpuQuery(body: string | undefined): RawGpu[] {
       smClockMhz: nvidiaNum(f[9]),
       memTotalBytes: mb(f[10]),
       memUsedBytes: mb(f[11]),
+      smClockMaxMhz: nvidiaNum(f[12]),
+      /*
+       * The driver's own account of why clocks are down, as a bitmask. A zero
+       * here while the clock sits far below its ceiling under load is the
+       * interesting case: nothing is claiming responsibility.
+       */
+      throttleReasons: parseThrottleMask(f[13]),
     });
   }
   return out;

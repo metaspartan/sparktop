@@ -467,6 +467,46 @@ function buildWarnings(
       }
     }
 
+    /*
+     * GPU clocked far below its ceiling while working, with nothing claiming
+     * responsibility.
+     *
+     * GB10 parts have a known fault where the USB-C power-delivery negotiation
+     * ends up in a state that leaves the GPU pinned to a low clock. It is
+     * unusually hard to notice: utilisation still reads high, the power state
+     * still reads P0, and NVML reports no throttle reason at all — the only
+     * outward sign is that everything runs at roughly half speed. Detecting it
+     * needs all four facts together, because each on its own is ordinary:
+     * a low clock alone is an idle GPU, low power alone is a light workload,
+     * and a real thermal or power cap announces itself in the throttle mask.
+     */
+    const g = n.gpu;
+    if (g && g.smClockMhz !== null && g.smClockMaxMhz !== null && g.smClockMaxMhz > 0) {
+      const clockPct = (g.smClockMhz / g.smClockMaxMhz) * 100;
+      const declared = g.throttleReasons?.reasons.filter((r) => r !== "idle") ?? [];
+      const busy = g.utilPct >= 50;
+      const cool = g.temperatureC === null || g.temperatureC < 80;
+      const lowPower = g.powerDrawW !== null && g.powerDrawW < 35;
+      const id = `gpu-clock-${n.id}`;
+
+      // Clears at 55% rather than 45% so a part hovering near the line does not
+      // toggle the alert every poll.
+      if (busy && cool && lowPower && declared.length === 0 && crosses(id, 100 - clockPct, 55, 45)) {
+        add(
+          id,
+          "error",
+          `${n.label}: GPU stuck at low clock`,
+          `SM clock ${g.smClockMhz} MHz of ${g.smClockMaxMhz} MHz (${clockPct.toFixed(0)}%) at ` +
+            `${g.utilPct.toFixed(0)}% utilisation, drawing ${g.powerDrawW?.toFixed(1)} W, with no throttle ` +
+            `reason reported and the part at ${g.temperatureC?.toFixed(0) ?? "?"}°C. On GB10 this is the ` +
+            `signature of a USB-C power-delivery negotiation fault, which halves inference throughput. ` +
+            `Check for firmware updates (fwupdmgr refresh --force && fwupdmgr get-upgrades); if none apply, ` +
+            `a full power disconnect of the brick from both wall and device is the reported recovery.`,
+          [n.id]
+        );
+      }
+    }
+
     if (n.gpu && n.gpu.vramTotalBytes > 0) {
       const id = `vram-${n.id}`;
       const pct = (n.gpu.vramUsedBytes / n.gpu.vramTotalBytes) * 100;

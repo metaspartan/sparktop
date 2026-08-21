@@ -10,7 +10,7 @@ import { describe, expect, test } from "bun:test";
 import { buildClusterSnapshot, inferJobs, newAnalysisState, pairFabricPorts } from "./cluster.ts";
 import { encryptSecret, decryptSecret, safeEqual } from "./crypto.ts";
 import { fmtBps, fmtBytes, fmtDuration, fmtGbps, shortImage } from "./format.ts";
-import type { DockerContainer, FabricPort, NodeSnapshot } from "./types.ts";
+import type { DockerContainer, FabricPort, NodeSnapshot, GpuMetrics } from "./types.ts";
 
 function port(over: Partial<FabricPort> = {}): FabricPort {
   const base = buildPort(over);
@@ -404,5 +404,78 @@ describe("credential sealing", () => {
     expect(safeEqual("abc", "abc")).toBe(true);
     expect(safeEqual("abc", "abd")).toBe(false);
     expect(safeEqual("abc", "abcd")).toBe(false);
+  });
+});
+
+describe("GB10 low-clock detection", () => {
+  /**
+   * A GPU reading, defaulting to a healthy part working hard: clocked near its
+   * ceiling, drawing real power, nothing throttling.
+   */
+  const gpu = (over: Partial<GpuMetrics> = {}): GpuMetrics => ({
+    name: "NVIDIA GB10", uuid: "u", driverVersion: "580", cudaVersion: "13", unifiedMemory: true,
+    utilPct: 96, memUtilPct: null, temperatureC: 61, powerDrawW: 92, powerLimitW: null,
+    smClockMhz: 2405, smClockMaxMhz: 3003, throttleReasons: { mask: "0x0", reasons: [] },
+    vramTotalBytes: 122e9, vramUsedBytes: 40e9, vramUsedIsDerived: true, processes: [],
+    ...over,
+  });
+
+  const withGpu = (g: GpuMetrics | null) => buildClusterSnapshot([node("a", [], { gpu: g })]);
+  const stuck = (over: Partial<GpuMetrics> = {}) =>
+    withGpu(gpu({ smClockMhz: 799, powerDrawW: 19.5, ...over })).warnings.filter((w) =>
+      w.id.startsWith("gpu-clock-")
+    );
+
+  test("catches the documented signature", () => {
+    // 799 MHz of 3003 at 96% utilisation, ~19.5W, no throttle reason, cool.
+    const [warning] = stuck();
+    expect(warning).toBeDefined();
+    expect(warning!.severity).toBe("error");
+    expect(warning!.detail).toContain("799 MHz");
+    expect(warning!.detail).toContain("power-delivery");
+  });
+
+  test("says nothing about a healthy part under load", () => {
+    expect(withGpu(gpu()).warnings.filter((w) => w.id.startsWith("gpu-clock-"))).toHaveLength(0);
+  });
+
+  test("says nothing about an idle GPU", () => {
+    // Idle clocks low and draws little — ordinary, and the reason for the
+    // utilisation test.
+    expect(stuck({ utilPct: 0 })).toHaveLength(0);
+  });
+
+  test("stays quiet when the driver owns up to a reason", () => {
+    // A declared thermal or power cap is the GPU behaving correctly under a
+    // constraint, not the silent fault.
+    expect(stuck({ throttleReasons: { mask: "0x40", reasons: ["hardware thermal slowdown"] } })).toHaveLength(0);
+    expect(stuck({ throttleReasons: { mask: "0x4", reasons: ["software power cap"] } })).toHaveLength(0);
+  });
+
+  test("ignores the idle bit, which is not a real reason", () => {
+    expect(stuck({ throttleReasons: { mask: "0x1", reasons: ["idle"] } })).toHaveLength(1);
+  });
+
+  test("stays quiet on a hot part, which is ordinary throttling", () => {
+    expect(stuck({ temperatureC: 95 })).toHaveLength(0);
+  });
+
+  test("stays quiet when the part is drawing real power", () => {
+    // Low clock with high power is a different animal and not this fault.
+    expect(stuck({ powerDrawW: 90 })).toHaveLength(0);
+  });
+
+  test("needs the clock to be far down, not merely off its peak", () => {
+    // Boost clocks sit below the ceiling all the time.
+    expect(stuck({ smClockMhz: 2200 })).toHaveLength(0);
+  });
+
+  test("stays silent when NVML does not report the ceiling", () => {
+    expect(stuck({ smClockMaxMhz: null })).toHaveLength(0);
+    expect(stuck({ smClockMhz: null })).toHaveLength(0);
+  });
+
+  test("says nothing for a node with no GPU", () => {
+    expect(withGpu(null).warnings.filter((w) => w.id.startsWith("gpu-clock-"))).toHaveLength(0);
   });
 });
