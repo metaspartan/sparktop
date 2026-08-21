@@ -51,6 +51,47 @@ export interface RenderState {
   history: Map<string, number[]>;
 }
 
+/**
+ * How much of the overview to draw.
+ *
+ * The frame has to fit the terminal, and truncating it hides whatever happens
+ * to be last — which on a short window meant losing the interconnect and
+ * inference panels entirely. Instead the renderer tries these in order and
+ * keeps the richest one that fits, so a small terminal loses decoration rather
+ * than information.
+ */
+interface Detail {
+  trends: boolean;
+  cluster: boolean;
+  gauges: boolean;
+  coreGrid: boolean;
+  compactNodes: boolean;
+  /**
+   * Which panels below the nodes survive. Nodes themselves are never dropped —
+   * a dashboard that cannot show the machines is not worth drawing.
+   */
+  secondary: "all" | "links" | "none";
+}
+
+const DETAIL_LEVELS: Detail[] = [
+  { trends: true, cluster: true, gauges: true, coreGrid: true, compactNodes: false, secondary: "all" },
+  { trends: true, cluster: true, gauges: true, coreGrid: false, compactNodes: false, secondary: "all" },
+  { trends: false, cluster: true, gauges: true, coreGrid: false, compactNodes: false, secondary: "all" },
+  { trends: false, cluster: true, gauges: false, coreGrid: false, compactNodes: false, secondary: "all" },
+  { trends: false, cluster: false, gauges: false, coreGrid: false, compactNodes: false, secondary: "all" },
+  /*
+   * Compacting the nodes comes before discarding panels.
+   *
+   * Four rows of per-node detail are worth less than knowing the fabric is
+   * carrying traffic and which engines are up — on a cluster tool those are
+   * the reason to be looking. So a small window loses per-node depth first and
+   * whole subjects last.
+   */
+  { trends: false, cluster: false, gauges: false, coreGrid: false, compactNodes: true, secondary: "all" },
+  { trends: false, cluster: false, gauges: false, coreGrid: false, compactNodes: true, secondary: "links" },
+  { trends: false, cluster: false, gauges: false, coreGrid: false, compactNodes: true, secondary: "none" },
+];
+
 export function render(snap: ClusterSnapshot | null, st: RenderState): string[] {
   const W = st.width;
   if (!snap) return [dim("Connecting to nodes…")];
@@ -64,16 +105,24 @@ export function render(snap: ClusterSnapshot | null, st: RenderState): string[] 
     ];
   }
 
+  const nodes = st.selected >= 0 && snap.nodes[st.selected] ? [snap.nodes[st.selected]!] : snap.nodes;
+
+  if (st.view === "overview") {
+    // The frame loop keeps two rows for itself; anything beyond that is cut.
+    const budget = Math.max(8, st.height - 2);
+    let best: string[] = [];
+    for (const d of DETAIL_LEVELS) {
+      best = composeOverview(snap, nodes, st, W, d);
+      if (best.length <= budget) break;
+    }
+    return best;
+  }
+
   const lines: string[] = [];
   lines.push(...header(snap, st, W));
   lines.push("");
 
-  const nodes = st.selected >= 0 && snap.nodes[st.selected] ? [snap.nodes[st.selected]!] : snap.nodes;
-
   switch (st.view) {
-    case "overview":
-      lines.push(...overview(snap, nodes, st, W));
-      break;
     case "fabric":
       lines.push(...fabricView(snap, st, W));
       break;
@@ -83,11 +132,6 @@ export function render(snap: ClusterSnapshot | null, st: RenderState): string[] 
     case "containers":
       lines.push(...containerView(nodes, W));
       break;
-  }
-
-  if (snap.warnings.length && st.view === "overview") {
-    lines.push("");
-    lines.push(...warningLines(snap, W));
   }
 
   return lines;
@@ -260,29 +304,40 @@ function clusterSummary(snap: ClusterSnapshot, W: number): string[] {
   return [...columns(blocks, 2), ""];
 }
 
-function overview(snap: ClusterSnapshot, nodes: NodeSnapshot[], st: RenderState, W: number): string[] {
+function composeOverview(
+  snap: ClusterSnapshot,
+  nodes: NodeSnapshot[],
+  st: RenderState,
+  W: number,
+  d: Detail
+): string[] {
   // Everything below is laid out against a box interior.
   const I = W - 4;
-  const out: string[] = [...trends(snap, st, W)];
+  const out: string[] = [...header(snap, st, W), ""];
+  if (d.trends) out.push(...trends(snap, st, W));
   // Only when looking at the fleet: drilled into one node, the totals would
   // just restate that node's own figures.
-  if (nodes.length === snap.nodes.length) out.push(...clusterSummary(snap, W));
+  if (d.cluster && nodes.length === snap.nodes.length) out.push(...clusterSummary(snap, W));
 
   const nodeBody: string[] = [];
-  nodes.forEach((n, i) => {
-    if (i > 0) nodeBody.push("");
-    nodeBody.push(...nodeBlock(n, st, I));
-  });
+  if (d.compactNodes) {
+    for (const n of nodes) nodeBody.push(nodeLine(n, I));
+  } else {
+    nodes.forEach((n, i) => {
+      if (i > 0) nodeBody.push("");
+      nodeBody.push(...nodeBlock(n, st, I, d));
+    });
+  }
   out.push(...panel(`Nodes (${nodes.length})`, nodeBody, W));
 
-  if (snap.fabric.links.length) {
+  if (snap.fabric.links.length && d.secondary !== "none") {
     out.push("");
     const body = snap.fabric.links.flatMap((l) => linkLine(l, I));
     out.push(...panel("Interconnect", body, W, C.series3));
   }
 
   const endpoints = snap.nodes.flatMap((n) => n.inference ?? []);
-  if (endpoints.length) {
+  if (endpoints.length && d.secondary === "all") {
     const body: string[] = [];
     for (const e of endpoints) {
       if (!e.reachable) {
@@ -304,7 +359,7 @@ function overview(snap: ClusterSnapshot, nodes: NodeSnapshot[], st: RenderState,
     out.push(...panel("Inference", body, W, C.series2));
   }
 
-  if (snap.jobs.length) {
+  if (snap.jobs.length && d.secondary === "all") {
     const body: string[] = [];
     for (const j of snap.jobs) {
       body.push(
@@ -317,10 +372,55 @@ function overview(snap: ClusterSnapshot, nodes: NodeSnapshot[], st: RenderState,
     out.push("");
     out.push(...panel("Distributed workloads", body, W, C.series3));
   }
+  // Alerts stay until the very last level: a warning is the one thing worth
+  // the row it costs.
+  if (snap.warnings.length && d.secondary !== "none") {
+    out.push("");
+    out.push(...warningLines(snap, W));
+  }
   return out;
 }
 
-function nodeBlock(n: NodeSnapshot, st: RenderState, W: number): string[] {
+/**
+ * One node on one line, for a window too short for anything else.
+ *
+ * Keeps the four figures that decide whether a machine is healthy and busy —
+ * GPU, memory pressure, temperature, and whether the fabric is moving — and
+ * drops everything that needs a second row to explain itself.
+ */
+function nodeLine(n: NodeSnapshot, W: number): string {
+  const dot =
+    n.status === "online" ? C.good("●") : n.status === "error" ? C.critical("●") : dim("●");
+  if (n.status !== "online") {
+    return `${dot} ${bold(C.ink(padEnd(truncate(n.label, 16), 17)))}${dim(truncate(n.error ?? "not connected", W - 20))}`;
+  }
+  const g = n.gpu;
+  const vramPct = g ? pctOf(g.vramUsedBytes, g.vramTotalBytes) : 0;
+  const gpuPct = g?.utilPct ?? 0;
+  const fab = n.fabric.ports.reduce((a, p) => a + p.rdmaRxBps + p.tcpRxBps + p.rdmaTxBps + p.tcpTxBps, 0);
+
+  /*
+   * Sized against the width actually available rather than a fixed layout —
+   * this line exists because the window is small, so truncating it would
+   * defeat the point. The "gpu"/"vram" captions are the first thing to go,
+   * since the bars are already in a known order.
+   */
+  const nameW = Math.max(10, Math.min(18, Math.floor(W * 0.22)));
+  const labels = W >= 96;
+  const fixed = 2 + nameW + 5 + 2 + 8 + 2 + 6 + 1 + 8 + 1 + 11 + (labels ? 9 : 0);
+  const barW = Math.max(3, Math.min(14, Math.floor((W - fixed) / 2)));
+
+  return (
+    `${dot} ${bold(C.ink(padEnd(truncate(n.label, nameW - 1), nameW)))}` +
+    `${labels ? dim("gpu ") : ""}${bar(gpuPct, barW, toneFor(gpuPct))}${padStart(`${gpuPct.toFixed(0)}%`, 5)}  ` +
+    `${labels ? dim("vram ") : ""}${bar(vramPct, barW, toneFor(vramPct))}${padStart(fmtBytes(g?.vramUsedBytes ?? 0), 8)}  ` +
+    `${tempTone(n.thermal.maxC)(padStart(fmtTemp(n.thermal.maxC), 6))} ` +
+    `${dim(padStart(fmtWatts(g?.powerDrawW), 8))} ` +
+    `${fab > 1e6 ? C.series3(padStart(fmtBps(fab), 11)) : dim(padStart("idle", 11))}`
+  );
+}
+
+function nodeBlock(n: NodeSnapshot, st: RenderState, W: number, d: Detail): string[] {
   const statusDot =
     n.status === "online"
       ? C.good("●")
@@ -364,7 +464,7 @@ function nodeBlock(n: NodeSnapshot, st: RenderState, W: number): string[] {
    * information in a quarter of the columns.
    */
   const gaugeW = Math.floor((W - 6) / 2);
-  if (W >= 96) {
+  if (d.gauges && W >= 96) {
     const gh = 3;
     const gpuPct = g?.utilPct ?? 0;
     const left = [
@@ -407,7 +507,7 @@ function nodeBlock(n: NodeSnapshot, st: RenderState, W: number): string[] {
    * terminal too narrow for cells, and both are dropped below that.
    */
   const cores = n.cpu.perCorePct ?? [];
-  if (cores.length) {
+  if (d.coreGrid && cores.length) {
     const grid = coreGrid(cores, W - 2, toneFor, cores.length > 12 ? 4 : 2);
     if (grid.length) {
       out.push("");
@@ -434,12 +534,18 @@ function nodeBlock(n: NodeSnapshot, st: RenderState, W: number): string[] {
 }
 
 function linkLine(l: FabricLink, W: number): string[] {
-  const bw = Math.max(6, Math.min(18, W - 62));
   const status = l.faults > 0 ? C.critical(`⚠${l.faults}`) : l.confirmed ? C.good("✓") : C.warning("?");
   const flow = l.active ? C.series3("⇄") : dim("·");
+  /*
+   * Endpoint names take what is left after the figures, split evenly, rather
+   * than a fixed 26 columns that overflows an 80-column terminal.
+   */
+  const tail = 10 + 1 + `/${l.rateGbps}G`.length + 2;
+  const endW = Math.max(8, Math.min(26, Math.floor((W - tail - 12) / 2)));
+  const bw = Math.max(4, Math.min(18, W - tail - endW * 2 - 8));
   return [
-    `  ${padEnd(truncate(`${l.a.nodeLabel}:${l.a.netdev}`, 26), 26)} ${flow} ` +
-      `${padEnd(truncate(`${l.b.nodeLabel}:${l.b.netdev}`, 26), 26)} ` +
+    `  ${padEnd(truncate(`${l.a.nodeLabel}:${l.a.netdev}`, endW), endW)} ${flow} ` +
+      `${padEnd(truncate(`${l.b.nodeLabel}:${l.b.netdev}`, endW), endW)} ` +
       `${bar(l.utilPct, bw, toneFor(l.utilPct))} ` +
       `${padStart(fmtGbps(l.aToBGbps + l.bToAGbps), 10)} ${dim(`/${l.rateGbps}G`)} ${status}`,
   ];
