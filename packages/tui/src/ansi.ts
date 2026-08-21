@@ -286,6 +286,111 @@ export function coreBars(values: number[], toneOf: (pct: number) => (s: string) 
     .join("");
 }
 
+/**
+ * Lay blocks of lines side by side.
+ *
+ * Panels stacked vertically waste most of a wide terminal and push everything
+ * interesting below the fold. Each block is padded to its own width so a short
+ * one does not drag the blocks beside it out of alignment.
+ */
+export function columns(blocks: { lines: string[]; width: number }[], gap = 1): string[] {
+  const visible2 = blocks.filter((b) => b.lines.length > 0);
+  if (visible2.length === 0) return [];
+  if (visible2.length === 1) return visible2[0]!.lines;
+
+  const rows = Math.max(...visible2.map((b) => b.lines.length));
+  const sep = " ".repeat(gap);
+  const out: string[] = [];
+  for (let r = 0; r < rows; r++) {
+    out.push(visible2.map((b) => padEnd(b.lines[r] ?? "", b.width)).join(sep));
+  }
+  return out;
+}
+
+/**
+ * A large filled gauge, the proportion shown as area rather than as a line.
+ *
+ * A one-row bar is easy to overlook in a dense frame; a block that fills the
+ * panel reads at a glance from across a room, which is the point of leaving a
+ * dashboard running on a spare screen.
+ */
+export function gauge(pct: number, width: number, height: number, color: (s: string) => string, label?: string): string[] {
+  if (width < 4 || height < 1) return [];
+  const clamped = Math.max(0, Math.min(100, pct));
+  const filled = Math.round((clamped / 100) * width);
+  const text = label ?? `${clamped.toFixed(0)}%`;
+
+  /*
+   * The label sits on the middle row, centred inside the filled block where it
+   * fits — the number then reads as belonging to the quantity rather than
+   * floating over the empty remainder. When the fill is too small to hold it,
+   * it falls back to the centre of the whole gauge so a low reading is still
+   * labelled.
+   */
+  const mid = Math.floor((height - 1) / 2);
+  const start =
+    filled >= text.length + 2
+      ? Math.floor((filled - text.length) / 2)
+      : Math.max(0, Math.floor((width - text.length) / 2));
+
+  const out: string[] = [];
+  for (let r = 0; r < height; r++) {
+    if (r !== mid) {
+      out.push(color("█".repeat(filled)) + dim("░".repeat(width - filled)));
+      continue;
+    }
+    let line = "";
+    for (let c = 0; c < width; c++) {
+      const ch = c >= start && c < start + text.length ? text[c - start]! : null;
+      if (ch !== null) line += c < filled ? bold(inverse(color(ch))) : bold(C.ink(ch));
+      else line += c < filled ? color("█") : dim("░");
+    }
+    out.push(line);
+  }
+  return out;
+}
+
+/**
+ * Per-core load as a grid of labelled cells, in the shape mactop uses.
+ *
+ * One glyph per core fits anywhere but says only "busy or not". A cell wide
+ * enough for an index, a bar and a number says which core, how busy, and by how
+ * much — and twenty of them tile into four rows rather than twenty.
+ */
+export function coreGrid(
+  values: number[],
+  width: number,
+  toneOf: (pct: number) => (s: string) => string,
+  cols = 5
+): string[] {
+  if (!values.length) return [];
+  const gap = 1;
+  const cellW = Math.floor((width - gap * (cols - 1)) / cols);
+  // Index, brackets, a percentage and at least a stub of bar.
+  if (cellW < 14) return [];
+
+  const idxW = String(values.length - 1).length;
+  const barW = cellW - idxW - 10;
+  const rows = Math.ceil(values.length / cols);
+  const out: string[] = [];
+
+  for (let r = 0; r < rows; r++) {
+    const cells: string[] = [];
+    for (let c = 0; c < cols; c++) {
+      // Column-major, so consecutive core numbers read down a column the way
+      // mactop lays them out.
+      const i = c * rows + r;
+      if (i >= values.length) { cells.push(" ".repeat(cellW)); continue; }
+      const pct = Math.max(0, Math.min(100, values[i]!));
+      cells.push(
+        `${dim(padStart(String(i), idxW))} ${dim("[")}${bar(pct, barW, toneOf(pct))}${padStart(`${pct.toFixed(1)}%`, 6)}${dim("]")}`
+      );
+    }
+    out.push(cells.join(" ".repeat(gap)));
+  }
+  return out;
+}
+
 /** A section heading rule: "── Title ───────────". */
 export function rule(title: string, width: number): string {
   const label = ` ${title} `;

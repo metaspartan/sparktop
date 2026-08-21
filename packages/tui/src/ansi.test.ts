@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { C, bold, chart, coreBars, panel } from "./ansi.ts";
+import { C, bold, chart, columns, coreBars, coreGrid, gauge, panel } from "./ansi.ts";
 
 /** Strip SGR so assertions see only glyphs. */
 const plain = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
@@ -120,5 +120,91 @@ describe("coreBars", () => {
 
   test("is empty for a machine that reported no cores", () => {
     expect(coreBars([], tone)).toBe("");
+  });
+});
+
+describe("gauge", () => {
+  test("every row is exactly the requested width", () => {
+    for (const pct of [0, 1, 37, 99, 100]) {
+      for (const row of gauge(pct, 30, 3, (s) => s).map(plain)) expect(row.length).toBe(30);
+    }
+  });
+
+  test("fills in proportion to the value", () => {
+    const full = plain(gauge(100, 20, 1, (s) => s)[0]!);
+    const empty = plain(gauge(0, 20, 1, (s) => s)[0]!);
+    expect(full).not.toContain("░");
+    // 0% still shows its label, so only the fill glyph is absent.
+    expect(empty).not.toContain("█");
+  });
+
+  test("labels inside the filled block once it is wide enough", () => {
+    const row = plain(gauge(80, 40, 1, (s) => s)[0]!);
+    const at = row.indexOf("80%");
+    // 80% of 40 is 32 columns; the label belongs inside that, not past it.
+    expect(at).toBeGreaterThan(0);
+    expect(at + 3).toBeLessThanOrEqual(32);
+  });
+
+  test("still labels a value too small to hold the text", () => {
+    expect(plain(gauge(2, 30, 1, (s) => s)[0]!)).toContain("2%");
+  });
+
+  test("clamps rather than overflowing on out-of-range input", () => {
+    expect(plain(gauge(-5, 20, 1, (s) => s)[0]!).length).toBe(20);
+    expect(plain(gauge(400, 20, 1, (s) => s)[0]!).length).toBe(20);
+  });
+
+  test("declines to draw when there is no room", () => {
+    expect(gauge(50, 3, 1, (s) => s)).toEqual([]);
+    expect(gauge(50, 20, 0, (s) => s)).toEqual([]);
+  });
+});
+
+describe("coreGrid", () => {
+  const tone = () => (s: string) => s;
+
+  test("tiles cores into rows without exceeding the width", () => {
+    const rows = coreGrid(Array.from({ length: 20 }, () => 50), 120, tone, 4).map(plain);
+    expect(rows).toHaveLength(5);
+    for (const r of rows) expect(r.length).toBeLessThanOrEqual(120);
+  });
+
+  test("numbers every core exactly once", () => {
+    const cells = coreGrid(Array.from({ length: 20 }, () => 0), 120, tone, 4)
+      .map(plain)
+      .join(" ")
+      .split("[")
+      .slice(1);
+    expect(cells).toHaveLength(20);
+    // The index precedes each cell's opening bracket; collect and compare as a set.
+    const text = coreGrid(Array.from({ length: 20 }, () => 0), 120, tone, 4).map(plain).join("\n");
+    const seen = [...text.matchAll(/(\d+) \[/g)].map((m) => Number(m[1]));
+    expect(seen.sort((a, b) => a - b)).toEqual(Array.from({ length: 20 }, (_, i) => i));
+  });
+
+  test("gives up when a cell would be too narrow to read", () => {
+    // Better to fall back to the one-glyph-per-core row than print noise.
+    expect(coreGrid([1, 2, 3, 4], 20, tone, 4)).toEqual([]);
+  });
+
+  test("is empty for a machine that reported no cores", () => {
+    expect(coreGrid([], 120, tone)).toEqual([]);
+  });
+});
+
+describe("columns", () => {
+  test("pads a short block so its neighbour stays aligned", () => {
+    const rows = columns([{ lines: ["a"], width: 10 }, { lines: ["b", "c"], width: 10 }], 2).map(plain);
+    expect(rows).toHaveLength(2);
+    for (const r of rows) expect(r.length).toBe(22);
+  });
+
+  test("passes a single block through untouched", () => {
+    expect(columns([{ lines: ["only"], width: 10 }])).toEqual(["only"]);
+  });
+
+  test("ignores empty blocks rather than leaving a gap", () => {
+    expect(columns([{ lines: [], width: 10 }, { lines: ["x"], width: 4 }])).toEqual(["x"]);
   });
 });

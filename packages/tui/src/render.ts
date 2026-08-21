@@ -23,7 +23,10 @@ import {
   bar,
   bold,
   chart,
+  columns,
   coreBars,
+  coreGrid,
+  gauge,
   dim,
   padEnd,
   padStart,
@@ -265,28 +268,70 @@ function nodeBlock(n: NodeSnapshot, st: RenderState, W: number): string[] {
   ];
 
   const out = [head];
-  for (const [label, pct, text, key] of rows) {
-    const spark = sw > 0 ? dim(sparkline(st.history.get(`${n.id}:${key}`) ?? [], sw, 100)) : "";
-    out.push(
-      `  ${dim(padEnd(label, 5))}${bar(pct, bw, toneFor(pct))} ${padStart(`${pct.toFixed(0)}%`, 4)} ` +
-        `${padEnd(dim(text), 26)}${spark}`
-    );
+
+  /*
+   * Wide terminals get GPU and memory as filled gauges side by side, which is
+   * the shape these two numbers deserve — they are the ones read from across
+   * the room. Narrower ones keep the stacked bar rows, which carry the same
+   * information in a quarter of the columns.
+   */
+  const gaugeW = Math.floor((W - 6) / 2);
+  if (W >= 96) {
+    const gh = 3;
+    const gpuPct = g?.utilPct ?? 0;
+    const left = [
+      `${dim("GPU")} ${bold(toneFor(gpuPct)(`${gpuPct.toFixed(0)}%`))}` +
+        dim(`  ${g?.smClockMhz ? `${g.smClockMhz} MHz  ` : ""}${fmtTemp(g?.temperatureC ?? null)}  ${fmtWatts(g?.powerDrawW)}`),
+      ...gauge(gpuPct, gaugeW, gh, toneFor(gpuPct)),
+    ];
+    const right = [
+      `${dim("VRAM")} ${bold(toneFor(vramPct)(`${vramPct.toFixed(0)}%`))}` +
+        dim(`  ${fmtBytes(g?.vramUsedBytes ?? 0)} / ${fmtBytes(g?.vramTotalBytes ?? 0)} unified`),
+      ...gauge(vramPct, gaugeW, gh, toneFor(vramPct)),
+    ];
+    out.push(...columns([{ lines: left, width: gaugeW }, { lines: right, width: gaugeW }], 2).map((l) => `  ${l}`));
+    out.push("");
+    // CPU and system memory stay as rows: they are context, not headline.
+    for (const [label, pct, text, key] of rows.slice(2)) {
+      const spark = sw > 0 ? dim(sparkline(st.history.get(`${n.id}:${key}`) ?? [], sw, 100)) : "";
+      out.push(
+        `  ${dim(padEnd(label, 5))}${bar(pct, bw, toneFor(pct))} ${padStart(`${pct.toFixed(0)}%`, 4)} ` +
+          `${padEnd(dim(text), 26)}${spark}`
+      );
+    }
+  } else {
+    for (const [label, pct, text, key] of rows) {
+      const spark = sw > 0 ? dim(sparkline(st.history.get(`${n.id}:${key}`) ?? [], sw, 100)) : "";
+      out.push(
+        `  ${dim(padEnd(label, 5))}${bar(pct, bw, toneFor(pct))} ${padStart(`${pct.toFixed(0)}%`, 4)} ` +
+          `${padEnd(dim(text), 26)}${spark}`
+      );
+    }
   }
 
   /*
-   * Per-core load, one bar per core.
+   * Per-core load.
    *
    * The averaged CPU percentage above cannot distinguish one pinned core from
    * every core at a tenth, and on a 20-core Spark that is usually the question
-   * being asked. Dropped when the row would not fit rather than wrapped.
+   * being asked. A labelled grid is preferred where it fits, since it names the
+   * core and gives a number; the one-glyph-per-core row is the fallback for a
+   * terminal too narrow for cells, and both are dropped below that.
    */
   const cores = n.cpu.perCorePct ?? [];
-  if (cores.length && W > cores.length + 20) {
-    const peak = Math.max(...cores);
-    out.push(
-      `  ${dim(padEnd("CORE", 5))}${coreBars(cores, toneFor)} ` +
-        dim(`${cores.length} cores · peak ${peak.toFixed(0)}%`)
-    );
+  if (cores.length) {
+    const grid = coreGrid(cores, W - 2, toneFor, cores.length > 12 ? 4 : 2);
+    if (grid.length) {
+      out.push("");
+      out.push(dim(`  ${cores.length} cores · peak ${Math.max(...cores).toFixed(0)}%`));
+      out.push(...grid.map((l) => `  ${l}`));
+    } else if (W > cores.length + 20) {
+      out.push(
+        `  ${dim(padEnd("CORE", 5))}${coreBars(cores, toneFor)} ` +
+          dim(`${cores.length} cores · peak ${Math.max(...cores).toFixed(0)}%`)
+      );
+    }
+    out.push("");
   }
 
   const fabRx = n.fabric.ports.reduce((a, p) => a + p.rdmaRxBps + p.tcpRxBps, 0);
