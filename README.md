@@ -140,7 +140,12 @@ Non-Spark NVIDIA hosts work too — you simply get no fabric section for them.
 - **What is holding GPU memory** — per-process VRAM, mapped back to the container that owns it.
 - **What is running across more than one node** — tensor-parallel jobs are detected from container topology, with ranks and aggregate VRAM.
 - **What each model is actually doing** — decode and prefill throughput, time to first token, queue depth and KV cache pressure, read from whichever engine is serving.
+- **When something is quietly wrong** — including [a GB10 pinned to a low clock](#silent-low-clock-detection) by the USB-C power-delivery fault, which halves throughput while every other metric keeps reading normal.
 - **Everything you would expect**: GPU utilisation, unified memory, per-core CPU, every thermal sensor, disks, Docker containers, and network interfaces.
+
+It keeps [durable history](#run-history) in SQLite, exports
+[Prometheus metrics](#prometheus), and can [manage containers](#controls) when
+you opt in.
 
 ## Interconnect
 
@@ -200,48 +205,78 @@ The TUI runs the same collector, so it needs no server:
 bun run tui
 ```
 
-Or attach it to a running instance, which is cheaper when several people are watching:
+Or attach it to a running instance, which is cheaper when several people are
+watching the same cluster:
 
 ```bash
 bun packages/tui/src/index.ts --server http://localhost:5757
 ```
 
 ```
-sparktop │ 2/2 nodes                                                        14:25:09
-fabric 1.32 Gbps/201.6G · vram 202 GB/243 GB · cpu 11% · pwr 88.5 W · temp 89°C
-  · ctr 2 · tok/s 36.9 · req 1
+sparktop │ 2/2 nodes                                                                         11:41:48 PM
+fabric 6.92 Gbps/201.6G  ·  vram 202 GB/243 GB  ·  cpu 14%  ·  pwr 152 W  ·  temp 95°C  ·  ctr 2  ·  to…
 
-── Nodes ────────────────────────────────────────────────────────────────────────
-● spark-01 10.0.0.11 [ASUS Ascent GX10]  281ms
-  GPU  ██████████████████████▊·  95% 95%                              █████
-  VRAM ███████████████████▉····  83% 101 GB/122 GB                    ▇▇▇▇▇
-  CPU  ██▋·····················  11% 11%                              ▂▂▂▂▂
-  MEM  ██████████████████████▌·  94% 115 GB/122 GB                    █████
-  temp 89°C  pwr 43.8 W  net ↓1.32 Gbps ↑1.32 Gbps  up 21h 23m
+╭─ Unified memory ──────────────╮  ╭─ GPU ─────────────────────────╮  ╭─ Fabric ───────────────────────╮
+│ 202 GB / 243 GB               │  │ 96% mean · 2 GPUs             │  │ 6.92 Gbps / 201.6G             │
+│ ██████████83%███████████░░░░░ │  │ ████████████96%█████████████░ │  │ █░░░░░░░░░░░░3%░░░░░░░░░░░░░░  │
+│ ████████████████████████░░░░░ │  │ ████████████████████████████░ │  │ █░░░░░░░░░░░░░░░░░░░░░░░░░░░░  │
+│ spark-01 █████████▏    101 GB │  │ spark-01 ██████████▌      96% │  │ enp1s0f1np1   ▌     13.8 Gbps  │
+│ spark-02 █████████▏    101 GB │  │ spark-02 ██████████▌      96% │  │ enP2p1s0f1np1          0 Gbps  │
+│                               │  │                               │  │ 2 links · 2 confirmed          │
+╰───────────────────────────────╯  ╰───────────────────────────────╯  ╰────────────────────────────────╯
 
-● spark-02 10.0.0.12 [ASUS Ascent GX10]  273ms
-  GPU  ██████████████████████▊·  95% 95%                              █████
-  VRAM ███████████████████▉····  83% 101 GB/122 GB                    ▇▇▇▇▇
-  CPU  ██▋·····················  11% 11%                              ▂▂▂▂▂
-  MEM  ██████████████████████▏·  92% 112 GB/122 GB                    ▇▇▇▇▇
-  temp 89°C  pwr 44.6 W  net ↓1.32 Gbps ↑1.32 Gbps  up 21h 5m
+╭─ Nodes (2) ──────────────────────────────────────────────────────────────────────────────────────────╮
+│ ● spark-01 10.0.0.11 [ASUS Ascent GX10]  281ms                                                       │
+│   GPU  ███████████████████████   96% 96%                       ████████████████████                  │
+│   VRAM ███████████████████▉      83% 101 GB/122 GB             ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇                  │
+│   CPU  ███▎                      14% 14%                       ▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂                  │
+│   MEM  ██████████████████████▌   94% 114 GB/122 GB             ████████████████████                  │
+│   temp 95°C  pwr 75.0 W  net ↓6.82 Gbps ↑6.82 Gbps  up 1d 6h                                         │
+│                                                                                                      │
+│ ● spark-02 10.0.0.12 [ASUS Ascent GX10]  246ms                                                       │
+│   GPU  ███████████████████████   96% 96%                       ████████████████████                  │
+│   VRAM ███████████████████▉      83% 101 GB/122 GB             ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇                  │
+│   CPU  ███▎                      14% 14%                       ▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂                  │
+│   MEM  ██████████████████████▏   93% 113 GB/122 GB             ▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇▇                  │
+│   temp 94°C  pwr 77.3 W  net ↓6.92 Gbps ↑6.92 Gbps  up 1d 6h                                         │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
-── Interconnect ─────────────────────────────────────────────────────────────────
-  spark-01:enp1s0f1np1    ⇄ spark-02:enp1s0f1np1    ▏······  2.64 Gbps /100.8G ✓
-  spark-01:enP2p1s0f1np1  · spark-02:enP2p1s0f1np1  ·······     0 Gbps /100.8G ✓
+╭─ Interconnect ───────────────────────────────────────────────────────────────────────────────────────╮
+│   spark-01:enp1s0f1np1       ⇄ spark-02:enp1s0f1np1       █▏                  13.8 Gbps /100.8G ✓    │
+│   spark-01:enP2p1s0f1np1     · spark-02:enP2p1s0f1np1                            0 Gbps /100.8G ✓    │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
-── Inference ────────────────────────────────────────────────────────────────────
-  ● spark-01:8888     vLLM      36.9 tok/s  run 1  queue 0  served 838  kv 11%
-      deepseek-v4-flash-0731
+╭─ Inference ──────────────────────────────────────────────────────────────────────────────────────────╮
+│ ● spark-01:8888         vLLM            0.0 tok/s  run 1  queue 0  served 967  kv 8%                 │
+│     deepseek-v4-flash-0731                                                                           │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────╯
 
-── Distributed workloads ────────────────────────────────────────────────────────
-  deepseek-ai/DeepSeek-V4-Flash-0731  ranks 2  vram 202 GB  traffic 2.64 Gbps
-    spark-01#0  spark-02#1
+╭─ Distributed workloads ──────────────────────────────────────────────────────────────────────────────╮
+│ deepseek-ai/DeepSeek-V4-Flash-0731  ranks 2  vram 202 GB  traffic 13.8 Gbps                          │
+│   spark-01#0  spark-02#1                                                                             │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+╭─ Alerts ─────────────────────────────────────────────────────────────────────────────────────────────╮
+│ ! spark-01 running hot                                                                               │
+│   acpitz at 95.3°C of 100°C (95% of its limit).                                                      │
+│ ! spark-02 running hot                                                                               │
+│   acpitz at 94.4°C of 100°C (94% of its limit).                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
 Keys: `o` overview · `f` fabric · `p` processes · `c` containers · `←/→` select node · `space` pause · `q` quit.
 
-Piping to a file or a pager prints one frame and exits, so `sparktop --once` works in scripts and cron.
+**It fits the window it is given.** The renderer tries progressively leaner
+layouts and keeps the richest one that fits the available rows, rather than
+drawing a tall frame and cutting the bottom off. Decoration goes first — trend
+charts, then the cluster band, then the gauges and the per-core grid — then the
+nodes collapse to one line each, and only then do whole panels go. The node
+panel is never dropped. In practice an 80x24 window still shows every machine,
+every link, the engines and the running jobs.
+
+Piping to a file or a pager prints one frame and exits, so `sparktop --once`
+works in scripts and cron. Set `FORCE_COLOR=1` to keep the escapes when
+capturing to a file, or `NO_COLOR=1` to drop them.
 
 ## How it works
 
@@ -502,7 +537,10 @@ Everything is optional; nodes can also be managed at runtime through the API or 
 | `POST` | `/api/nodes/test` | Dry-run a connection without saving |
 | `PATCH` | `/api/nodes/:id` | Edit a node |
 | `DELETE` | `/api/nodes/:id` | Remove a node |
+| `GET` | `/api/runs` | Serving sessions from durable history |
+| `GET` | `/api/updates` | Whether newer commits or images exist |
 | `WS` | `/ws` | Snapshot stream |
+| `GET` | `/metrics` | Prometheus exposition — see below |
 
 ```bash
 curl -X POST http://localhost:5757/api/nodes \
@@ -511,6 +549,34 @@ curl -X POST http://localhost:5757/api/nodes \
 ```
 
 Adding, editing and removing nodes all take effect without a restart.
+
+### Prometheus
+
+```yaml
+scrape_configs:
+  - job_name: sparktop
+    static_configs:
+      - targets: ["localhost:5757"]
+```
+
+`/metrics` is a projection of the snapshot the collector already holds rather
+than a second collection path, so a scrape never opens an SSH session: a slow
+node cannot stall it, and scraping cannot slow collection down. The body is
+cached against the snapshot's timestamp, so several Prometheus servers share one
+render and a scrape costs about 0.4 ms.
+
+Roughly 43 families cover nodes, GPUs, thermals, disks, fabric ports and links,
+and every inference endpoint. Values follow convention rather than sparktop's
+internals — bytes and seconds, percentages as 0-1 ratios, `_total` on counters.
+Two deliberate choices:
+
+- **An absent reading is omitted, not sent as zero.** A missing GPU temperature
+  would otherwise graph as a cold GPU.
+- **Latency is exported only when it covers the recent window.** A lifetime
+  average would sit flat on a dashboard looking like a live measurement.
+
+When `SPARKTOP_TOKEN` is set the scrape needs it too, as
+`authorization: Bearer <token>`.
 
 ## Development
 

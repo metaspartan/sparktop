@@ -480,7 +480,7 @@ function buildWarnings(
      * a low clock alone is an idle GPU, low power alone is a light workload,
      * and a real thermal or power cap announces itself in the throttle mask.
      */
-    const g = n.gpu;
+    const g: NodeSnapshot["gpu"] = n.gpu;
     if (g && g.smClockMhz !== null && g.smClockMaxMhz !== null && g.smClockMaxMhz > 0) {
       const clockPct = (g.smClockMhz / g.smClockMaxMhz) * 100;
       const declared = g.throttleReasons?.reasons.filter((r) => r !== "idle") ?? [];

@@ -310,10 +310,16 @@ function clusterSummary(snap: ClusterSnapshot, W: number): string[] {
   const tallest = Math.max(...bodies.map((b) => b.length));
   for (const b of bodies) while (b.length < tallest) b.push("");
 
+  /*
+   * The last panel absorbs the remainder of the division, so the band ends
+   * flush with the full-width panels stacked below it rather than one or two
+   * columns short.
+   */
+  const lastW = W - (each + 2) * 2;
   const blocks = [
     { lines: panel("Unified memory", vram, each), width: each },
     { lines: panel("GPU", gpu, each), width: each },
-    { lines: panel("Fabric", fabric, each, C.series3), width: each },
+    { lines: panel("Fabric", fabric, lastW, C.series3), width: lastW },
   ];
   return [...columns(blocks, 2), ""];
 }
