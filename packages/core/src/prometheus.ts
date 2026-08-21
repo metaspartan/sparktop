@@ -213,6 +213,17 @@ export function renderPrometheus(snap: ClusterSnapshot): string {
     e.metric("sparktop_fabric_link_throughput_bits_per_second", "gauge", "Current throughput, per direction.", l.bToAGbps * 1e9, [...ll, ["direction", "b_to_a"]]);
   }
 
+  /*
+   * Fleet token rates. Available per endpoint above, but summed here too so a
+   * dashboard does not have to know how many endpoints exist to plot "what is
+   * this cluster producing".
+   */
+  e.metric("sparktop_cluster_output_tokens_per_second", "gauge", "Output tokens per second across all engines.", snap.totals.tokensPerSec);
+  e.metric("sparktop_cluster_input_tokens_per_second", "gauge", "Prompt tokens accepted per second across all engines, cache hits included.", snap.totals.promptTokensPerSec);
+  e.metric("sparktop_cluster_input_computed_tokens_per_second", "gauge", "Prompt tokens that reached a model, per second, across all engines.", snap.totals.promptComputedTokensPerSec);
+  e.metric("sparktop_cluster_requests_running", "gauge", "Requests generating across all engines.", snap.totals.requestsRunning);
+  e.metric("sparktop_cluster_requests_waiting", "gauge", "Requests queued across all engines.", snap.totals.requestsWaiting);
+
   e.metric("sparktop_fabric_capacity_bits_per_second", "gauge", "Sum of link capacity.", snap.fabric.totalCapacityGbps * 1e9);
   e.metric("sparktop_fabric_traffic_bits_per_second", "gauge", "Sum of link throughput.", snap.fabric.totalTrafficGbps * 1e9);
 

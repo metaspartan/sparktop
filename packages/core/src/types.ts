@@ -588,8 +588,19 @@ export interface ClusterSnapshot {
     containers: number;
     /** Inference servers detected across the cluster. */
     inferenceEndpoints: number;
-    /** Combined generation throughput, tokens/sec. */
+    /** Combined generation throughput, output tokens/sec. */
     tokensPerSec: number;
+    /**
+     * Combined prompt throughput, input tokens/sec — every token the engines
+     * were handed, prefix-cache hits included.
+     */
+    promptTokensPerSec: number;
+    /**
+     * The part of that which actually reached a model. On a long conversation
+     * the cache serves most of the prompt, so this is the one that reflects
+     * work done.
+     */
+    promptComputedTokensPerSec: number;
     /** Requests currently generating, across all endpoints. */
     requestsRunning: number;
     requestsWaiting: number;

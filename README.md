@@ -375,8 +375,8 @@ Reported per endpoint:
 
 | Metric | Meaning |
 |---|---|
-| **Decode** tok/s | Output tokens the server produces, aggregate |
-| **Prefill** tok/s | Prompt tokens that went through the model, with the raw ingest rate beside it |
+| **Output** tok/s | Generated tokens, aggregate, with the lifetime total beside it |
+| **Input** tok/s | Prompt tokens that went through the model, with the raw ingest rate beside it |
 | **TTFT** | Time to first token |
 | **Per-token** | Inter-token latency, and the decode speed one request sees |
 | **Queue** | Time waiting before work began |
@@ -414,6 +414,18 @@ it so the engine's own figure is still there to compare.
 **Aggregate decode is not per-request speed** either: a server producing
 60 tok/s across four concurrent requests gives each of them about 15, which is
 what a user actually experiences. Both are shown.
+
+Input and output are charted separately as well as per endpoint. They answer
+different questions and live on different scales: output is what a request waits
+for, input is what had to be read first, and on a long agentic conversation the
+second runs orders of magnitude larger — a fleet showing 109K generated against
+18M ingested is normal, not a fault. The input line is plotted as the tokens
+that reached a model, with the ingested rate above it; the gap between the two
+is the prefix cache.
+
+History keeps `tokens`, `prefill`, `computed`, `running`, `queued` and `ttft`
+per endpoint, plus cluster totals, so a chart never has to sum a varying number
+of series.
 
 Where one logical server is reachable twice (behind a proxy, or on two ports) the
 duplicate is folded out of cluster totals, so a tensor-parallel job — where only

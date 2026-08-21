@@ -47,7 +47,7 @@ function snap(nodes: NodeSnapshot[]): ClusterSnapshot {
     totals: {
       nodes: nodes.length, nodesOnline: nodes.filter((n) => n.status === "online").length, gpus: 0,
       vramTotalBytes: 0, vramUsedBytes: 0, cpuCores: 0, cpuUsagePct: 0, memTotalBytes: 0, memUsedBytes: 0,
-      powerDrawW: 0, maxTempC: null, containers: 0, inferenceEndpoints: 0, tokensPerSec: 0,
+      powerDrawW: 0, maxTempC: null, containers: 0, inferenceEndpoints: 0, tokensPerSec: 0, promptTokensPerSec: 0, promptComputedTokensPerSec: 0,
       requestsRunning: 0, requestsWaiting: 0,
     },
   };

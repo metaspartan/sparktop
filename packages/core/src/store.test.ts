@@ -71,7 +71,7 @@ function snap(ts: number, endpoints: InferenceEndpoint[]): ClusterSnapshot {
     jobs: [], warnings: [],
     totals: { nodes: 1, nodesOnline: 1, gpus: 0, vramTotalBytes: 0, vramUsedBytes: 0, cpuCores: 0, cpuUsagePct: 0,
       memTotalBytes: 0, memUsedBytes: 0, powerDrawW: 0, maxTempC: null, containers: 0,
-      inferenceEndpoints: endpoints.length, tokensPerSec: 0, requestsRunning: 0, requestsWaiting: 0 },
+      inferenceEndpoints: endpoints.length, tokensPerSec: 0, promptTokensPerSec: 0, promptComputedTokensPerSec: 0, requestsRunning: 0, requestsWaiting: 0 },
   };
 }
 

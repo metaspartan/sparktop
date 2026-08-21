@@ -46,6 +46,34 @@ export function InferenceView({ nodes, history, themeKey }: Props) {
   }));
   const ts = history?.ts ?? [];
 
+  /*
+   * Input against output, as one chart of cluster totals.
+   *
+   * Splitting by endpoint would answer "which server" — already covered by the
+   * chart above. This answers the different question of what the fleet is
+   * reading versus what it is producing, which is the shape of the workload
+   * rather than its distribution.
+   *
+   * Prompt tokens are plotted as the part that reached a model, not everything
+   * the engine was handed: a cached prefix arrives as a spike of tens of
+   * thousands and would flatten the output series into the axis. The ingested
+   * rate is kept as a third, dimmer series so the cache's contribution is still
+   * visible as the gap between them.
+   */
+  const ioSeries: ChartSeries[] = [
+    { label: "Output", colorVar: "--series-1", values: history?.series["cluster:tokensOut"] ?? [] },
+    { label: "Input (computed)", colorVar: "--series-3", values: history?.series["cluster:tokensComputed"] ?? [] },
+    { label: "Input (ingested)", colorVar: "--series-4", values: history?.series["cluster:tokensIn"] ?? [] },
+  ].filter((s) => s.values.length > 0);
+
+  const totalIn = endpoints.reduce((a, e) => a + (e.prefillTokensPerSec ?? 0), 0);
+  const totalComputed = endpoints.reduce(
+    (a, e) => a + (e.prefillComputedTokensPerSec ?? e.prefillTokensPerSec ?? 0),
+    0
+  );
+  const cumulativeIn = endpoints.reduce((a, e) => a + (e.promptTokensTotal ?? 0), 0);
+  const cumulativeOut = endpoints.reduce((a, e) => a + (e.generationTokensTotal ?? 0), 0);
+
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
       <Card
@@ -57,16 +85,27 @@ export function InferenceView({ nodes, history, themeKey }: Props) {
         }
         bodyClass="p-0"
       >
+        {/* Output and input given equal billing, with the lifetime totals
+            underneath each: the rate says what is happening now, the total says
+            how much this fleet has actually done. */}
         <div className="grid grid-cols-2 gap-4 border-b border-edge p-4 sm:grid-cols-4">
-          <Stat label="Decode" value={`${Math.round(totalTokens * 10) / 10}`} sub="output tokens/sec" />
-          {/* The headline prefill figure is the computed one. Counting cache
-              hits reports tokens the model never processed, which on a long
-              agentic conversation is most of them — see the endpoint row for
-              the raw ingest rate beside the hit rate that explains it. */}
           <Stat
-            label="Prefill"
-            value={`${Math.round(endpoints.reduce((a, e) => a + (e.prefillComputedTokensPerSec ?? e.prefillTokensPerSec ?? 0), 0) * 10) / 10}`}
-            sub="computed tokens/sec"
+            label="Output"
+            value={`${Math.round(totalTokens * 10) / 10}`}
+            sub={`tok/s · ${compactTokens(cumulativeOut)} total`}
+          />
+          {/* The headline input figure is the computed one. Counting cache
+              hits reports tokens the model never processed, which on a long
+              agentic conversation is most of them — the ingested rate sits
+              beside it below. */}
+          <Stat
+            label="Input"
+            value={`${Math.round(totalComputed * 10) / 10}`}
+            sub={
+              totalIn > totalComputed * 1.05
+                ? `tok/s computed · ${Math.round(totalIn)} ingested`
+                : `tok/s · ${compactTokens(cumulativeIn)} total`
+            }
           />
           <Stat label="In flight" value={String(running)} sub="requests" />
           <Stat label="Queued" value={String(waiting)} sub="waiting" />
@@ -110,8 +149,57 @@ export function InferenceView({ nodes, history, themeKey }: Props) {
           </div>
         )}
       </Card>
+
+      {ioSeries.length > 0 && (
+        <Card
+          className="lg:col-span-2"
+          title="Input and output tokens"
+          right={
+            <div className="flex flex-wrap gap-2.5">
+              {ioSeries.map((s) => (
+                <LegendItem key={s.label} colorVar={s.colorVar} label={s.label} />
+              ))}
+            </div>
+          }
+        >
+          {ts.length > 1 ? (
+            <>
+              <TimeChart
+                ts={ts}
+                series={ioSeries}
+                height={168}
+                format={(v) => `${v.toFixed(1)} tok/s`}
+                tickFormat={(v) => compactTokens(v)}
+                minRange={10}
+                themeKey={themeKey}
+              />
+              <p className="mt-2 text-[11px] leading-relaxed text-ink-muted">
+                Output is what a request waits for. Input is plotted as the prompt tokens that reached a
+                model; the ingested line above it is everything the engine was handed, and the gap between
+                them is the prefix cache. A long conversation spends most of its input on the cheap line.
+              </p>
+            </>
+          ) : (
+            <div className="flex h-[168px] items-center justify-center text-[11px] text-ink-muted">
+              Collecting…
+            </div>
+          )}
+        </Card>
+      )}
     </div>
   );
+}
+
+/**
+ * Token counts run to hundreds of millions, which is unreadable in full and
+ * pointless at that precision — the magnitude is the information.
+ */
+function compactTokens(v: number): string {
+  const n = Math.abs(v);
+  if (n >= 1e9) return `${(v / 1e9).toFixed(1)}B`;
+  if (n >= 1e6) return `${(v / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `${(v / 1e3).toFixed(n >= 1e4 ? 0 : 1)}K`;
+  return v.toFixed(0);
 }
 
 /** One latency figure. Null reads as "no completions", never as zero. */

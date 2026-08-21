@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { HistoryStore } from "./history.ts";
+import { HistoryStore, historySample } from "./history.ts";
 import type { ClusterSnapshot, NodeSnapshot } from "./types.ts";
 
 function node(id: string, status: NodeSnapshot["status"] = "online"): NodeSnapshot {
@@ -34,9 +34,30 @@ const snap = (nodes: NodeSnapshot[], ts: number): ClusterSnapshot => ({
     nodes: nodes.length, nodesOnline: nodes.filter((n) => n.status === "online").length, gpus: 0,
     vramTotalBytes: 0, vramUsedBytes: 0, cpuCores: 0, cpuUsagePct: 0,
     memTotalBytes: 0, memUsedBytes: 0, powerDrawW: 0, maxTempC: null, containers: 0,
-    inferenceEndpoints: 0, tokensPerSec: 0, requestsRunning: 0, requestsWaiting: 0,
+    inferenceEndpoints: 0, tokensPerSec: 0, promptTokensPerSec: 0, promptComputedTokensPerSec: 0, requestsRunning: 0, requestsWaiting: 0,
   },
 });
+
+
+/** A one-node cluster with a single inference endpoint, for series assertions. */
+function snapshotWithEndpoint(over: Record<string, unknown>): ClusterSnapshot {
+  const n = node("n1");
+  n.inference = [
+    {
+      id: "n1:8888", nodeId: "n1", nodeLabel: "n1", port: 8888, engine: "vllm", engineLabel: "vLLM",
+      models: ["m"], reachable: true, requestsRunning: 1, requestsWaiting: 0, requestsFinishedTotal: 5,
+      promptTokensTotal: 1000, generationTokensTotal: 200, kvCachePct: 10,
+      decodeTokensPerSec: 40, prefillTokensPerSec: 5000, prefillComputedTokensPerSec: 130,
+      generationTokensPerSec: 40, promptTokensPerSec: 5000, requestsPerMin: 6,
+      cachedPromptTokensTotal: 900, promptCacheHitPct: 90, specAcceptanceRatePct: null,
+      specMeanAcceptedLength: null, latencyBasis: "window", ttftMs: null, interTokenLatencyMs: null,
+      perRequestDecodeTokensPerSec: null, e2eLatencyMs: null, queueLatencyMs: null,
+      prefillMs: null, decodeMs: null,
+      ...over,
+    } as never,
+  ];
+  return snap([n], 1000);
+}
 
 /** Every series is the same length as the timeline. */
 function expectAligned(store: HistoryStore): number {
@@ -96,5 +117,46 @@ describe("HistoryStore", () => {
     s.prune(new Set(["a"]));
     expect(s.payload().series["b:cpu"]).toBeUndefined();
     expect(s.payload().series["a:cpu"]).toBeDefined();
+  });
+});
+
+describe("inference series", () => {
+  test("keeps input and output apart, and records both prompt rates", () => {
+    /*
+     * One combined token series cannot answer either question: output is what a
+     * request waits for, input is what had to be read first, and the two differ
+     * by orders of magnitude once a prefix cache is involved.
+     */
+    const s = snapshotWithEndpoint({
+      generationTokensPerSec: 40,
+      prefillTokensPerSec: 5000,
+      prefillComputedTokensPerSec: 130,
+    });
+    const row = historySample(s);
+    expect(row["infer:n1:8888:tokens"]).toBe(40);
+    expect(row["infer:n1:8888:prefill"]).toBe(5000);
+    expect(row["infer:n1:8888:computed"]).toBe(130);
+  });
+
+  test("records a gap, not a zero, when a rate is unknown", () => {
+    // Before the first delta exists there is no rate; zero would be a claim.
+    const row = historySample(snapshotWithEndpoint({ prefillComputedTokensPerSec: null }));
+    expect(Number.isNaN(row["infer:n1:8888:computed"])).toBe(true);
+  });
+
+  test("omits TTFT that is only a lifetime average", () => {
+    // A flat, hours-old mean plotted against live series reads as a measurement.
+    const row = historySample(snapshotWithEndpoint({ ttftMs: 2500, latencyBasis: "lifetime" }));
+    expect(Number.isNaN(row["infer:n1:8888:ttft"])).toBe(true);
+
+    const live = historySample(snapshotWithEndpoint({ ttftMs: 2500, latencyBasis: "window" }));
+    expect(live["infer:n1:8888:ttft"]).toBe(2500);
+  });
+
+  test("carries cluster totals so a chart need not sum endpoints", () => {
+    const row = historySample(snapshotWithEndpoint({}));
+    expect(row["cluster:tokensOut"]).toBeDefined();
+    expect(row["cluster:tokensIn"]).toBeDefined();
+    expect(row["cluster:tokensComputed"]).toBeDefined();
   });
 });

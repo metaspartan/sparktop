@@ -110,8 +110,29 @@ export function historySample(snap: ClusterSnapshot): Record<string, number> {
       // NaN, not 0, before the first delta exists — an unknown rate is a gap.
       out[`infer:${e.id}:tokens`] = e.generationTokensPerSec ?? NaN;
       out[`infer:${e.id}:running`] = e.requestsRunning ?? NaN;
+      /*
+       * Input and output kept apart.
+       *
+       * They answer different questions and move on different scales: output is
+       * what a user waits for, input is what the machine had to read first, and
+       * on a long agentic conversation the second is orders of magnitude larger.
+       * Both ingested and computed prompt rates are kept, because the gap
+       * between them is the prefix cache doing its job.
+       */
+      out[`infer:${e.id}:prefill`] = e.prefillTokensPerSec ?? NaN;
+      out[`infer:${e.id}:computed`] = e.prefillComputedTokensPerSec ?? NaN;
+      out[`infer:${e.id}:queued`] = e.requestsWaiting ?? NaN;
+      out[`infer:${e.id}:ttft`] = e.latencyBasis === "window" && e.ttftMs !== null ? e.ttftMs : NaN;
     }
   }
+
+  /*
+   * Cluster-wide token rates, so a chart does not have to sum a varying number
+   * of endpoint series to answer "what is the fleet producing".
+   */
+  out["cluster:tokensOut"] = snap.totals.tokensPerSec;
+  out["cluster:tokensIn"] = snap.totals.promptTokensPerSec;
+  out["cluster:tokensComputed"] = snap.totals.promptComputedTokensPerSec;
 
   return out;
 }

@@ -57,7 +57,7 @@ function snapshot(nodeCount: number): ClusterSnapshot {
       vramTotalBytes: 122e9 * nodeCount, vramUsedBytes: 101e9 * nodeCount,
       cpuCores: 20 * nodeCount, cpuUsagePct: 12, memTotalBytes: 130e9 * nodeCount,
       memUsedBytes: 115e9 * nodeCount, powerDrawW: 53 * nodeCount, maxTempC: 61,
-      containers: 0, inferenceEndpoints: 0, tokensPerSec: 0, requestsRunning: 0, requestsWaiting: 0,
+      containers: 0, inferenceEndpoints: 0, tokensPerSec: 0, promptTokensPerSec: 0, promptComputedTokensPerSec: 0, requestsRunning: 0, requestsWaiting: 0,
     },
   };
 }
