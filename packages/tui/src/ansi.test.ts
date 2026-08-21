@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { chart } from "./ansi.ts";
+import { C, bold, chart, coreBars, panel } from "./ansi.ts";
 
 /** Strip SGR so assertions see only glyphs. */
 const plain = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
@@ -71,5 +71,54 @@ describe("braille chart", () => {
   test("degrades to nothing rather than garbage when there is no room", () => {
     expect(chart([1, 2], 3, 4)).toEqual([]);
     expect(chart([1, 2], 20, 0)).toEqual([]);
+  });
+});
+
+describe("panel", () => {
+  test("every line is exactly the requested width, colour or not", () => {
+    const rows = panel("Title", ["plain", C.series1("coloured"), bold("bold")], 40).map(plain);
+    for (const r of rows) expect(r.length).toBe(40);
+  });
+
+  test("truncates over-long content rather than letting it wrap and break the box", () => {
+    const rows = panel("T", ["x".repeat(200)], 30).map(plain);
+    expect(rows.every((r) => r.length === 30)).toBe(true);
+    expect(rows[1]).toContain("…");
+  });
+
+  test("keeps the title in the top border", () => {
+    const rows = panel("Nodes", ["a"], 30).map(plain);
+    expect(rows[0]).toContain("Nodes");
+    expect(rows[0]!.startsWith("╭")).toBe(true);
+    expect(rows[rows.length - 1]!.startsWith("╰")).toBe(true);
+  });
+
+  test("gives up on a box too narrow to hold one, returning the content", () => {
+    // A border would consume more columns than the content has.
+    expect(panel("T", ["abc"], 6)).toEqual(["abc"]);
+  });
+});
+
+describe("coreBars", () => {
+  const tone = () => (s: string) => s;
+
+  test("draws one glyph per core", () => {
+    expect(plain(coreBars([0, 50, 100], tone)).length).toBe(3);
+  });
+
+  test("distinguishes an idle core from a lightly loaded one", () => {
+    // Both would round to the same level without a floor, and "some load" is
+    // exactly what a per-core view exists to show.
+    const [idle, light] = plain(coreBars([0, 3], tone));
+    expect(idle).not.toBe(light);
+  });
+
+  test("clamps out-of-range values instead of indexing past the ramp", () => {
+    expect(() => coreBars([-20, 250], tone)).not.toThrow();
+    expect(plain(coreBars([-20, 250], tone)).length).toBe(2);
+  });
+
+  test("is empty for a machine that reported no cores", () => {
+    expect(coreBars([], tone)).toBe("");
   });
 });

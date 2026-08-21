@@ -240,6 +240,52 @@ export const BOX = {
   br: "╯",
 };
 
+/**
+ * A titled box.
+ *
+ * Sections separated by a rule blur together once a frame is dense — the eye
+ * has to work out where one ends. A border makes the grouping structural
+ * rather than typographic, which is why nvtop and macmon both draw one.
+ *
+ * Content is padded to the inner width so the right edge stays straight
+ * regardless of colour escapes, and over-long lines are truncated rather than
+ * allowed to wrap and break the box.
+ */
+export function panel(title: string, body: string[], width: number, accent = C.series1): string[] {
+  const inner = width - 4;
+  if (inner < 8) return body;
+
+  const label = ` ${title} `;
+  const fill = Math.max(0, width - 3 - visibleLength(label));
+  const top = dim(BOX.tl + BOX.h) + bold(accent(label)) + dim(BOX.h.repeat(fill) + BOX.tr);
+  const bottom = dim(BOX.bl + BOX.h.repeat(width - 2) + BOX.br);
+  const side = dim(BOX.v);
+
+  const rows = body.map((l) => `${side} ${padEnd(truncate(l, inner), inner)} ${side}`);
+  return [top, ...rows, bottom];
+}
+
+/**
+ * One vertical bar per core, in a single row.
+ *
+ * The interesting thing about a many-core machine is the shape of the load —
+ * one pinned core versus twenty at half — and a single averaged percentage
+ * hides exactly that. Eight block levels per core is enough to read the shape
+ * at a glance, in one row rather than twenty.
+ */
+export function coreBars(values: number[], toneOf: (pct: number) => (s: string) => string): string {
+  if (!values.length) return "";
+  return values
+    .map((v) => {
+      const pct = Math.max(0, Math.min(100, v));
+      // Anything non-zero gets at least the shortest bar, so an idle core and a
+      // lightly busy one are distinguishable rather than both blank.
+      const level = pct <= 0 ? 0 : Math.max(1, Math.min(7, Math.round((pct / 100) * 7)));
+      return toneOf(pct)(SPARK[level]!);
+    })
+    .join("");
+}
+
 /** A section heading rule: "── Title ───────────". */
 export function rule(title: string, width: number): string {
   const label = ` ${title} `;

@@ -17,7 +17,22 @@ import {
   pctOf,
   shortImage,
 } from "@sparktop/core";
-import { BOX, C, bar, bold, chart, dim, padEnd, padStart, rule, sparkline, tempTone, toneFor, truncate } from "./ansi.ts";
+import {
+  BOX,
+  C,
+  bar,
+  bold,
+  chart,
+  coreBars,
+  dim,
+  padEnd,
+  padStart,
+  panel,
+  sparkline,
+  tempTone,
+  toneFor,
+  truncate,
+} from "./ansi.ts";
 
 export type View = "overview" | "fabric" | "processes" | "containers";
 
@@ -110,8 +125,16 @@ const visible = (s: string): number => s.replace(/\x1b\[[0-9;]*m/g, "").length;
  * Dropped entirely on a short terminal, where the node blocks matter more.
  */
 function trends(snap: ClusterSnapshot, st: RenderState, W: number): string[] {
-  const H = 5;
-  if (st.height < 30 || W < 60) return [];
+  /*
+   * Chart height follows the terminal.
+   *
+   * A fixed height either wastes a tall window or crowds out the node blocks in
+   * a short one. Roughly a seventh of the rows, clamped to something that can
+   * still be read, means the charts grow when there is room and are dropped
+   * entirely when there is not.
+   */
+  const H = Math.max(3, Math.min(10, Math.floor(st.height / 7)));
+  if (st.height < 24 || W < 60) return [];
 
   const panels: { label: string; key: string; color: (s: string) => string; fmt: (v: number) => string; max?: number }[] = [
     { label: "GPU", key: "cluster:gpu", color: C.series1, fmt: (v) => `${v.toFixed(0)}%`, max: 100 },
@@ -121,8 +144,11 @@ function trends(snap: ClusterSnapshot, st: RenderState, W: number): string[] {
     panels.push({ label: "Tokens/s", key: "cluster:tokens", color: C.series2, fmt: (v) => v.toFixed(0) });
   }
 
+  // Charts are laid out against the box's interior, not the frame width, or
+  // the rightmost one is clipped by the border it sits inside.
+  const inner = W - 4;
   const gap = 2;
-  const each = Math.floor((W - gap * (panels.length - 1)) / panels.length);
+  const each = Math.floor((inner - gap * (panels.length - 1)) / panels.length);
   if (each < 20) return [];
 
   const rendered = panels.map((p) => {
@@ -139,57 +165,66 @@ function trends(snap: ClusterSnapshot, st: RenderState, W: number): string[] {
   });
 
   const rows = Math.max(...rendered.map((r) => r.length));
-  const out: string[] = [rule("Trends", W)];
+  const body: string[] = [];
   for (let r = 0; r < rows; r++) {
-    out.push(rendered.map((panel) => panel[r] ?? " ".repeat(each)).join(" ".repeat(gap)));
+    body.push(rendered.map((col) => col[r] ?? " ".repeat(each)).join(" ".repeat(gap)));
   }
-  out.push("");
-  return out;
+  return [...panel("Trends", body, W), ""];
 }
 
 function overview(snap: ClusterSnapshot, nodes: NodeSnapshot[], st: RenderState, W: number): string[] {
-  const out: string[] = [...trends(snap, st, W), rule("Nodes", W)];
-  for (const n of nodes) {
-    out.push(...nodeBlock(n, st, W));
-    out.push("");
-  }
+  // Everything below is laid out against a box interior.
+  const I = W - 4;
+  const out: string[] = [...trends(snap, st, W)];
+
+  const nodeBody: string[] = [];
+  nodes.forEach((n, i) => {
+    if (i > 0) nodeBody.push("");
+    nodeBody.push(...nodeBlock(n, st, I));
+  });
+  out.push(...panel(`Nodes (${nodes.length})`, nodeBody, W));
+
   if (snap.fabric.links.length) {
-    out.push(rule("Interconnect", W));
-    for (const l of snap.fabric.links) out.push(...linkLine(l, W));
+    out.push("");
+    const body = snap.fabric.links.flatMap((l) => linkLine(l, I));
+    out.push(...panel("Interconnect", body, W, C.series3));
   }
+
   const endpoints = snap.nodes.flatMap((n) => n.inference ?? []);
   if (endpoints.length) {
-    out.push("");
-    out.push(rule("Inference", W));
+    const body: string[] = [];
     for (const e of endpoints) {
       if (!e.reachable) {
-        out.push(`  ${C.critical("●")} ${bold(C.ink(`${e.nodeLabel}:${e.port}`))} ${dim("not responding")}`);
+        body.push(`${C.critical("●")} ${bold(C.ink(`${e.nodeLabel}:${e.port}`))} ${dim("not responding")}`);
         continue;
       }
       const busy = (e.requestsRunning ?? 0) > 0;
-      out.push(
-        `  ${busy ? C.good("●") : dim("●")} ${bold(C.ink(padEnd(`${e.nodeLabel}:${e.port}`, 22)))}` +
+      body.push(
+        `${busy ? C.good("●") : dim("●")} ${bold(C.ink(padEnd(`${e.nodeLabel}:${e.port}`, 22)))}` +
           `${C.series1(padEnd(e.engineLabel, 12))}` +
           `${padStart(e.decodeTokensPerSec === null ? "-" : e.decodeTokensPerSec.toFixed(1), 7)} ${dim("tok/s")}  ` +
           `${dim("run")} ${e.requestsRunning ?? "-"}  ${dim("queue")} ${e.requestsWaiting ?? "-"}  ` +
           `${dim("served")} ${e.requestsFinishedTotal ?? "-"}` +
           (e.kvCachePct !== null ? `  ${dim("kv")} ${e.kvCachePct.toFixed(0)}%` : "")
       );
-      if (e.models.length) out.push(dim(`      ${truncate(e.models.join(", "), W - 8)}`));
+      if (e.models.length) body.push(dim(`    ${truncate(e.models.join(", "), I - 4)}`));
     }
+    out.push("");
+    out.push(...panel("Inference", body, W, C.series2));
   }
 
   if (snap.jobs.length) {
-    out.push("");
-    out.push(rule("Distributed workloads", W));
+    const body: string[] = [];
     for (const j of snap.jobs) {
-      out.push(
-        `  ${bold(C.ink(truncate(j.model ?? shortImage(j.image), 44)))}  ` +
+      body.push(
+        `${bold(C.ink(truncate(j.model ?? shortImage(j.image), 44)))}  ` +
           `${dim("ranks")} ${j.members.length}  ${dim("vram")} ${fmtBytes(j.totalVramBytes)}  ` +
           `${dim("traffic")} ${j.trafficGbps > 0.01 ? C.series3(fmtGbps(j.trafficGbps)) : dim("idle")}`
       );
-      out.push(dim(`    ${j.members.map((m) => `${m.nodeLabel}${m.rank ? `#${m.rank}` : ""}`).join("  ")}`));
+      body.push(dim(`  ${j.members.map((m) => `${m.nodeLabel}${m.rank ? `#${m.rank}` : ""}`).join("  ")}`));
     }
+    out.push("");
+    out.push(...panel("Distributed workloads", body, W, C.series3));
   }
   return out;
 }
@@ -238,6 +273,22 @@ function nodeBlock(n: NodeSnapshot, st: RenderState, W: number): string[] {
     );
   }
 
+  /*
+   * Per-core load, one bar per core.
+   *
+   * The averaged CPU percentage above cannot distinguish one pinned core from
+   * every core at a tenth, and on a 20-core Spark that is usually the question
+   * being asked. Dropped when the row would not fit rather than wrapped.
+   */
+  const cores = n.cpu.perCorePct ?? [];
+  if (cores.length && W > cores.length + 20) {
+    const peak = Math.max(...cores);
+    out.push(
+      `  ${dim(padEnd("CORE", 5))}${coreBars(cores, toneFor)} ` +
+        dim(`${cores.length} cores · peak ${peak.toFixed(0)}%`)
+    );
+  }
+
   const fabRx = n.fabric.ports.reduce((a, p) => a + p.rdmaRxBps + p.tcpRxBps, 0);
   const fabTx = n.fabric.ports.reduce((a, p) => a + p.rdmaTxBps + p.tcpTxBps, 0);
   out.push(
@@ -262,58 +313,61 @@ function linkLine(l: FabricLink, W: number): string[] {
 }
 
 function fabricView(snap: ClusterSnapshot, st: RenderState, W: number): string[] {
-  const out: string[] = [rule("Fabric links", W)];
+  const I = W - 4;
+  const out: string[] = [];
+  const links: string[] = [];
   if (!snap.fabric.links.length) {
-    out.push(dim("  No point-to-point links resolved."));
-    out.push(dim("  Links are inferred from ports sharing a subnet across two nodes."));
+    links.push(dim("No point-to-point links resolved."));
+    links.push(dim("Links are inferred from ports sharing a subnet across two nodes."));
   }
   for (const l of snap.fabric.links) {
-    out.push("");
-    out.push(
-      `  ${bold(C.ink(l.a.nodeLabel))} ${dim(l.a.netdev)} ${dim(l.a.address ?? "")} ` +
+    if (links.length) links.push("");
+    links.push(
+      `${bold(C.ink(l.a.nodeLabel))} ${dim(l.a.netdev)} ${dim(l.a.address ?? "")} ` +
         `${C.series1("<->")} ${bold(C.ink(l.b.nodeLabel))} ${dim(l.b.netdev)} ${dim(l.b.address ?? "")}`
     );
-    const bw = Math.max(10, Math.min(30, W - 44));
+    const bw = Math.max(10, Math.min(30, I - 44));
     const abPct = l.rateGbps > 0 ? (l.aToBGbps / l.rateGbps) * 100 : 0;
     const baPct = l.rateGbps > 0 ? (l.bToAGbps / l.rateGbps) * 100 : 0;
-    out.push(`    ${dim("A→B")} ${bar(abPct, bw, C.series1)} ${padStart(fmtGbps(l.aToBGbps), 11)}`);
-    out.push(`    ${dim("B→A")} ${bar(baPct, bw, C.series2)} ${padStart(fmtGbps(l.bToAGbps), 11)}`);
-    out.push(
-      `    ${dim("rate")} ${l.rateGbps}G  ${dim("state")} ${l.up ? C.good("up") : C.critical("down")}  ` +
+    links.push(`  ${dim("A→B")} ${bar(abPct, bw, C.series1)} ${padStart(fmtGbps(l.aToBGbps), 11)}`);
+    links.push(`  ${dim("B→A")} ${bar(baPct, bw, C.series2)} ${padStart(fmtGbps(l.bToAGbps), 11)}`);
+    links.push(
+      `  ${dim("rate")} ${l.rateGbps}G  ${dim("state")} ${l.up ? C.good("up") : C.critical("down")}  ` +
         `${dim("verified")} ${l.confirmed ? C.good("yes") : C.warning("no")}  ` +
         `${dim("errors")} ${l.faults > 0 ? C.critical(String(l.faults)) : C.good("0")}  ` +
         `${dim("cnp")} ${l.congestionEvents}`
     );
   }
+  out.push(...panel("Fabric links", links, W, C.series3));
 
-  out.push("");
-  out.push(rule("Ports", W));
+  const ports: string[] = [];
   for (const n of snap.nodes) {
     if (n.status !== "online") continue;
-    out.push(`  ${bold(C.ink(n.label))}`);
+    if (ports.length) ports.push("");
+    ports.push(`${bold(C.ink(n.label))}`);
     for (const p of n.fabric.ports) {
       const state = p.linkUp ? C.good(padEnd("ACTIVE", 7)) : dim(padEnd(p.state, 7));
-      out.push(
-        `    ${padEnd(p.netdev, 15)} ${padEnd(dim(p.ibdev ?? "-"), 15)} ${state} ` +
+      ports.push(
+        `  ${padEnd(p.netdev, 15)} ${padEnd(dim(p.ibdev ?? "-"), 15)} ${state} ` +
           `${padStart(`${p.rateGbps}G`, 5)} ${padEnd(dim(p.addresses[0] ?? "-"), 19)} ` +
           `↓${padStart(fmtBps(p.rdmaRxBps + p.tcpRxBps), 10)} ↑${padStart(fmtBps(p.rdmaTxBps + p.tcpTxBps), 10)} ` +
           `${dim(fmtTemp(p.tempC))}`
       );
     }
   }
+  ports.push("");
+  ports.push(dim("RX/TX come from the NIC's RDMA counters; RoCE bypasses the kernel stack,"));
+  ports.push(dim("so /proc/net/dev under-reports these ports by orders of magnitude."));
   out.push("");
-  out.push(
-    dim("  RX/TX come from the NIC's RDMA counters; RoCE bypasses the kernel stack,")
-  );
-  out.push(dim("  so /proc/net/dev under-reports these ports by orders of magnitude."));
+  out.push(...panel("Ports", ports, W));
   return out;
 }
 
 function processView(nodes: NodeSnapshot[], W: number): string[] {
-  const out: string[] = [rule("GPU processes", W)];
+  const out: string[] = [];
   out.push(
     dim(
-      `  ${padEnd("NODE", 14)}${padEnd("PID", 8)}${padEnd("TYPE", 9)}${padStart("VRAM", 10)}  ` +
+      `${padEnd("NODE", 14)}${padEnd("PID", 8)}${padEnd("TYPE", 9)}${padStart("VRAM", 10)}  ` +
         `${padStart("CPU", 5)} ${padStart("RSS", 9)}  ${padEnd("PROCESS", 24)}CONTAINER`
     )
   );
@@ -324,7 +378,7 @@ function processView(nodes: NodeSnapshot[], W: number): string[] {
       any = true;
       const tone = p.type === "compute" ? C.series1 : C.muted;
       out.push(
-        `  ${padEnd(truncate(n.label, 13), 14)}${padEnd(String(p.pid), 8)}` +
+        `${padEnd(truncate(n.label, 13), 14)}${padEnd(String(p.pid), 8)}` +
           `${padEnd(tone(p.type), 9)}${padStart(bold(fmtBytes(p.vramBytes)), 10)}  ` +
           `${padStart(p.cpuPct === undefined ? "-" : `${p.cpuPct.toFixed(0)}%`, 5)} ` +
           `${padStart(p.rssBytes ? fmtBytes(p.rssBytes) : "-", 9)}  ` +
@@ -332,32 +386,33 @@ function processView(nodes: NodeSnapshot[], W: number): string[] {
       );
     }
   }
-  if (!any) out.push(dim("  Nothing is holding GPU memory."));
-  return out;
+  if (!any) out.push(dim("Nothing is holding GPU memory."));
+  return panel("GPU processes", out, W);
 }
 
 function containerView(nodes: NodeSnapshot[], W: number): string[] {
-  const out: string[] = [rule("Containers", W)];
+  const out: string[] = [];
   let any = false;
   for (const n of nodes) {
     if (n.status !== "online") continue;
     if (!n.docker.available) {
-      out.push(`  ${bold(C.ink(n.label))} ${dim("docker unavailable")}`);
+      out.push(`${bold(C.ink(n.label))} ${dim("docker unavailable")}`);
       continue;
     }
-    out.push(`  ${bold(C.ink(n.label))}`);
+    if (out.length) out.push("");
+    out.push(`${bold(C.ink(n.label))}`);
     for (const c of n.docker.containers) {
       any = true;
       const dot = c.state === "running" ? C.good("●") : dim("●");
       out.push(
-        `    ${dot} ${padEnd(truncate(c.name, 32), 33)}${padEnd(dim(truncate(shortImage(c.image), 34)), 35)}` +
+        `  ${dot} ${padEnd(truncate(c.name, 32), 33)}${padEnd(dim(truncate(shortImage(c.image), 34)), 35)}` +
           `${c.usesGpu ? C.series1(padStart(fmtBytes(c.gpuVramBytes ?? 0), 10)) : padStart("-", 10)}  ` +
           `${dim(truncate(c.status, 22))}`
       );
       if (c.distributed?.masterAddr) {
         out.push(
           dim(
-            `      master ${c.distributed.masterAddr}` +
+            `    master ${c.distributed.masterAddr}` +
               (c.distributed.rank !== undefined ? `  rank ${c.distributed.rank}` : "") +
               (c.distributed.ncclIbHca ? `  hca ${c.distributed.ncclIbHca}` : "") +
               (c.distributed.ncclIbDisabled ? `  ${C.warning("RDMA DISABLED")}` : "")
@@ -366,19 +421,20 @@ function containerView(nodes: NodeSnapshot[], W: number): string[] {
       }
     }
   }
-  if (!any) out.push(dim("  No containers."));
-  return out;
+  if (!any) out.push(dim("No containers."));
+  return panel("Containers", out, W);
 }
 
 function warningLines(snap: ClusterSnapshot, W: number): string[] {
-  const out = [rule("Alerts", W)];
+  const out: string[] = [];
+  const worst = snap.warnings.some((w) => w.severity === "error") ? C.critical : C.warning;
   for (const w of snap.warnings.slice(0, 6)) {
     const mark =
       w.severity === "error" ? C.critical("✕") : w.severity === "warn" ? C.warning("!") : C.series1("i");
-    out.push(`  ${mark} ${bold(C.ink(truncate(w.title, W - 6)))}`);
-    out.push(`    ${dim(truncate(w.detail, W - 6))}`);
+    out.push(`${mark} ${bold(C.ink(truncate(w.title, W - 8)))}`);
+    out.push(`  ${dim(truncate(w.detail, W - 8))}`);
   }
-  return out;
+  return panel("Alerts", out, W, worst);
 }
 
 /** Bottom status bar with the key map. */
