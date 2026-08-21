@@ -34,6 +34,7 @@ import {
   sparkline,
   tempTone,
   toneFor,
+  toneRgbFor,
   truncate,
 } from "./ansi.ts";
 
@@ -282,12 +283,12 @@ function nodeBlock(n: NodeSnapshot, st: RenderState, W: number): string[] {
     const left = [
       `${dim("GPU")} ${bold(toneFor(gpuPct)(`${gpuPct.toFixed(0)}%`))}` +
         dim(`  ${g?.smClockMhz ? `${g.smClockMhz} MHz  ` : ""}${fmtTemp(g?.temperatureC ?? null)}  ${fmtWatts(g?.powerDrawW)}`),
-      ...gauge(gpuPct, gaugeW, gh, toneFor(gpuPct)),
+      ...gauge(gpuPct, gaugeW, gh, toneRgbFor(gpuPct)),
     ];
     const right = [
       `${dim("VRAM")} ${bold(toneFor(vramPct)(`${vramPct.toFixed(0)}%`))}` +
         dim(`  ${fmtBytes(g?.vramUsedBytes ?? 0)} / ${fmtBytes(g?.vramTotalBytes ?? 0)} unified`),
-      ...gauge(vramPct, gaugeW, gh, toneFor(vramPct)),
+      ...gauge(vramPct, gaugeW, gh, toneRgbFor(vramPct)),
     ];
     out.push(...columns([{ lines: left, width: gaugeW }, { lines: right, width: gaugeW }], 2).map((l) => `  ${l}`));
     out.push("");

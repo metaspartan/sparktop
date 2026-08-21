@@ -7,9 +7,18 @@
  * dependency tree is meant to be auditable.
  */
 
-/** Honour NO_COLOR, and fall back to plain text when not a TTY. */
+/**
+ * Honour NO_COLOR, and fall back to plain text when not a TTY.
+ *
+ * FORCE_COLOR overrides the TTY test, which is what makes `sparktop --once`
+ * usable in a pipeline that understands escapes — capturing a frame to a file,
+ * or piping to a pager with `less -R`. NO_COLOR still wins, since a user who
+ * asked for no colour means it.
+ */
 export const COLOR_ENABLED =
-  !process.env.NO_COLOR && (process.stdout.isTTY ?? false) && process.env.TERM !== "dumb";
+  !process.env.NO_COLOR &&
+  process.env.TERM !== "dumb" &&
+  (Boolean(process.env.FORCE_COLOR) || (process.stdout.isTTY ?? false));
 
 const wrap = (open: string, s: string): string => (COLOR_ENABLED ? `\x1b[${open}m${s}\x1b[0m` : s);
 
@@ -27,21 +36,52 @@ export const bgRgb = (r: number, g: number, b: number, s: string): string =>
  * Palette, mirroring the web UI's tokens so both surfaces read the same.
  * Terminal backgrounds are usually dark, so these are the dark-mode steps.
  */
+export type Rgb = readonly [number, number, number];
+
+/**
+ * The palette as raw components, so a colour can be used as a background as
+ * well as a foreground. A solid gauge is painted with a background colour and
+ * blank cells rather than block glyphs — a run of `█` leaves hairline seams
+ * between cells in most terminal fonts, which is the difference between a bar
+ * that looks drawn and one that looks solid.
+ */
+export const TONE = {
+  series1: [0x39, 0x87, 0xe5],
+  series2: [0xd9, 0x59, 0x26],
+  series3: [0x19, 0x9e, 0x70],
+  series4: [0xc9, 0x85, 0x00],
+  good: [0x0c, 0xa3, 0x0c],
+  warning: [0xfa, 0xb2, 0x19],
+  critical: [0xd0, 0x3b, 0x3b],
+  muted: [0x89, 0x87, 0x81],
+  ink: [0xe6, 0xe6, 0xe0],
+} as const satisfies Record<string, Rgb>;
+
+/** The unfilled part of a gauge: present enough to show the extent, quiet enough to ignore. */
+export const TRACK: Rgb = [0x24, 0x2a, 0x26];
+/** Text drawn on top of a filled gauge. Near-black reads on every tone here. */
+export const ON_FILL: Rgb = [0x0a, 0x0d, 0x0a];
+
 export const C = {
-  series1: (s: string) => rgb(0x39, 0x87, 0xe5, s),
-  series2: (s: string) => rgb(0xd9, 0x59, 0x26, s),
-  series3: (s: string) => rgb(0x19, 0x9e, 0x70, s),
-  series4: (s: string) => rgb(0xc9, 0x85, 0x00, s),
-  good: (s: string) => rgb(0x0c, 0xa3, 0x0c, s),
-  warning: (s: string) => rgb(0xfa, 0xb2, 0x19, s),
-  critical: (s: string) => rgb(0xd0, 0x3b, 0x3b, s),
-  muted: (s: string) => rgb(0x89, 0x87, 0x81, s),
-  ink: (s: string) => rgb(0xe6, 0xe6, 0xe0, s),
+  series1: (s: string) => rgb(...TONE.series1, s),
+  series2: (s: string) => rgb(...TONE.series2, s),
+  series3: (s: string) => rgb(...TONE.series3, s),
+  series4: (s: string) => rgb(...TONE.series4, s),
+  good: (s: string) => rgb(...TONE.good, s),
+  warning: (s: string) => rgb(...TONE.warning, s),
+  critical: (s: string) => rgb(...TONE.critical, s),
+  muted: (s: string) => rgb(...TONE.muted, s),
+  ink: (s: string) => rgb(...TONE.ink, s),
 };
 
 /** Pick a tone from a 0-100 utilisation figure. */
 export function toneFor(pct: number): (s: string) => string {
   return pct >= 95 ? C.critical : pct >= 80 ? C.warning : C.series1;
+}
+
+/** The same choice, as components, for anything that needs a background. */
+export function toneRgbFor(pct: number): Rgb {
+  return pct >= 95 ? TONE.critical : pct >= 80 ? TONE.warning : TONE.series1;
 }
 
 export function tempTone(c: number | null): (s: string) => string {
@@ -91,15 +131,32 @@ export function truncate(s: string, width: number): string {
 
 const BLOCKS = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"];
 
-/** Horizontal bar with sub-character resolution. */
-export function bar(pct: number, width: number, color: (s: string) => string = C.series1): string {
+/**
+ * Horizontal bar with sub-character resolution.
+ *
+ * The filled run is painted as a background rather than as `█` glyphs, which
+ * removes the hairline seams between cells and makes a short bar read as one
+ * solid mark. The final partial cell stays a block glyph, since that is the
+ * only way to show a fraction of a column. The track is left blank — a dotted
+ * one competes with the bar for attention at exactly the width where the bar is
+ * hardest to see.
+ */
+export function bar(pct: number, width: number, color: (s: string) => string = C.series1, tone?: Rgb): string {
   const clamped = Math.max(0, Math.min(100, pct));
   const exact = (clamped / 100) * width;
   const full = Math.floor(exact);
   const rem = Math.floor((exact - full) * 8);
-  const filled = "█".repeat(full) + (rem > 0 ? BLOCKS[rem]! : "");
-  const empty = " ".repeat(Math.max(0, width - visibleLength(filled)));
-  return color(filled) + dim("·".repeat(empty.length));
+  const rgbTone = tone ?? toneRgbFor(clamped);
+
+  const solid =
+    full > 0
+      ? COLOR_ENABLED
+        ? `\x1b[48;2;${rgbTone[0]};${rgbTone[1]};${rgbTone[2]}m${" ".repeat(full)}\x1b[0m`
+        : "█".repeat(full)
+      : "";
+  const partial = rem > 0 && full < width ? color(BLOCKS[rem]!) : "";
+  const used = full + (partial ? 1 : 0);
+  return solid + partial + " ".repeat(Math.max(0, width - used));
 }
 
 /**
@@ -314,7 +371,7 @@ export function columns(blocks: { lines: string[]; width: number }[], gap = 1): 
  * panel reads at a glance from across a room, which is the point of leaving a
  * dashboard running on a spare screen.
  */
-export function gauge(pct: number, width: number, height: number, color: (s: string) => string, label?: string): string[] {
+export function gauge(pct: number, width: number, height: number, color: Rgb, label?: string): string[] {
   if (width < 4 || height < 1) return [];
   const clamped = Math.max(0, Math.min(100, pct));
   const filled = Math.round((clamped / 100) * width);
@@ -335,15 +392,46 @@ export function gauge(pct: number, width: number, height: number, color: (s: str
 
   const out: string[] = [];
   for (let r = 0; r < height; r++) {
-    if (r !== mid) {
-      out.push(color("█".repeat(filled)) + dim("░".repeat(width - filled)));
-      continue;
-    }
+    const labelRow = r === mid;
+    /*
+     * Emitted as runs rather than per cell. One escape pair per character both
+     * bloats the frame and makes a terminal draw each cell separately, which is
+     * what put a visible box around the number.
+     */
     let line = "";
-    for (let c = 0; c < width; c++) {
-      const ch = c >= start && c < start + text.length ? text[c - start]! : null;
-      if (ch !== null) line += c < filled ? bold(inverse(color(ch))) : bold(C.ink(ch));
-      else line += c < filled ? color("█") : dim("░");
+    let runStart = 0;
+    const cellKey = (c: number): string => {
+      const onFill = c < filled;
+      const ch = labelRow && c >= start && c < start + text.length ? text[c - start]! : " ";
+      return `${onFill ? "f" : "t"}${ch === " " ? "" : "x"}`;
+    };
+    const emit = (from: number, to: number): void => {
+      if (to <= from) return;
+      const onFill = from < filled;
+      const bg = onFill ? color : TRACK;
+      let body = "";
+      for (let c = from; c < to; c++) {
+        body += labelRow && c >= start && c < start + text.length ? text[c - start]! : " ";
+      }
+      const hasText = body.trim() !== "";
+      const fg = hasText ? (onFill ? ON_FILL : TONE.ink) : null;
+      const open = `48;2;${bg[0]};${bg[1]};${bg[2]}` + (fg ? `;1;38;2;${fg[0]};${fg[1]};${fg[2]}` : "");
+      if (COLOR_ENABLED) {
+        line += `\x1b[${open}m${body}\x1b[0m`;
+      } else {
+        /*
+         * Without colour the fill has to be a glyph, or the gauge is blank
+         * space and says nothing at all — which is what a plain-text capture
+         * or NO_COLOR would otherwise produce.
+         */
+        line += hasText ? body : (onFill ? "█" : "░").repeat(body.length);
+      }
+    };
+    for (let c = 1; c <= width; c++) {
+      if (c === width || cellKey(c) !== cellKey(runStart)) {
+        emit(runStart, c);
+        runStart = c;
+      }
     }
     out.push(line);
   }

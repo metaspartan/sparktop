@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { C, bold, chart, columns, coreBars, coreGrid, gauge, panel } from "./ansi.ts";
+import { C, COLOR_ENABLED, TONE, bold, chart, columns, coreBars, coreGrid, gauge, panel } from "./ansi.ts";
 
 /** Strip SGR so assertions see only glyphs. */
 const plain = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "");
@@ -126,20 +126,20 @@ describe("coreBars", () => {
 describe("gauge", () => {
   test("every row is exactly the requested width", () => {
     for (const pct of [0, 1, 37, 99, 100]) {
-      for (const row of gauge(pct, 30, 3, (s) => s).map(plain)) expect(row.length).toBe(30);
+      for (const row of gauge(pct, 30, 3, TONE.series1).map(plain)) expect(row.length).toBe(30);
     }
   });
 
   test("fills in proportion to the value", () => {
-    const full = plain(gauge(100, 20, 1, (s) => s)[0]!);
-    const empty = plain(gauge(0, 20, 1, (s) => s)[0]!);
+    const full = plain(gauge(100, 20, 1, TONE.series1)[0]!);
+    const empty = plain(gauge(0, 20, 1, TONE.series1)[0]!);
     expect(full).not.toContain("░");
     // 0% still shows its label, so only the fill glyph is absent.
     expect(empty).not.toContain("█");
   });
 
   test("labels inside the filled block once it is wide enough", () => {
-    const row = plain(gauge(80, 40, 1, (s) => s)[0]!);
+    const row = plain(gauge(80, 40, 1, TONE.series1)[0]!);
     const at = row.indexOf("80%");
     // 80% of 40 is 32 columns; the label belongs inside that, not past it.
     expect(at).toBeGreaterThan(0);
@@ -147,17 +147,46 @@ describe("gauge", () => {
   });
 
   test("still labels a value too small to hold the text", () => {
-    expect(plain(gauge(2, 30, 1, (s) => s)[0]!)).toContain("2%");
+    expect(plain(gauge(2, 30, 1, TONE.series1)[0]!)).toContain("2%");
   });
 
   test("clamps rather than overflowing on out-of-range input", () => {
-    expect(plain(gauge(-5, 20, 1, (s) => s)[0]!).length).toBe(20);
-    expect(plain(gauge(400, 20, 1, (s) => s)[0]!).length).toBe(20);
+    expect(plain(gauge(-5, 20, 1, TONE.series1)[0]!).length).toBe(20);
+    expect(plain(gauge(400, 20, 1, TONE.series1)[0]!).length).toBe(20);
   });
 
   test("declines to draw when there is no room", () => {
-    expect(gauge(50, 3, 1, (s) => s)).toEqual([]);
-    expect(gauge(50, 20, 0, (s) => s)).toEqual([]);
+    expect(gauge(50, 3, 1, TONE.series1)).toEqual([]);
+    expect(gauge(50, 20, 0, TONE.series1)).toEqual([]);
+  });
+
+  test("emits runs, not one escape pair per cell", () => {
+    /*
+     * Colouring each cell individually is what drew a visible box around the
+     * number: the terminal treats every cell as its own styled span. A 40-wide
+     * gauge has at most a handful of distinct runs.
+     */
+    const row = gauge(60, 40, 1, TONE.series1)[0]!;
+    const escapes = row.match(/\[[0-9;]*m/g) ?? [];
+    expect(escapes.length).toBeLessThanOrEqual(12);
+  });
+
+  test("fills with background when coloured, and with glyphs when not", () => {
+    /*
+     * Block glyphs leave hairline seams between cells, so a coloured gauge is
+     * painted as a background. Without colour that would be blank space saying
+     * nothing, so the glyphs come back — which is what a NO_COLOR run or a
+     * plain-text capture gets.
+     */
+    const row = gauge(60, 40, 1, TONE.series1)[0]!;
+    if (COLOR_ENABLED) {
+      expect(plain(row)).not.toContain("█");
+      expect(row).toContain("48;2;");
+    } else {
+      expect(plain(row)).toContain("█");
+      expect(plain(row)).toContain("░");
+    }
+    expect(plain(row)).toHaveLength(40);
   });
 });
 
