@@ -20,6 +20,7 @@ import {
 import {
   BOX,
   C,
+  TONE,
   bar,
   bold,
   chart,
@@ -176,10 +177,96 @@ function trends(snap: ClusterSnapshot, st: RenderState, W: number): string[] {
   return [...panel("Trends", body, W), ""];
 }
 
+/**
+ * Cluster totals as a row of panels: what the fleet adds up to.
+ *
+ * With one machine this would only repeat the node block, so it appears from
+ * two nodes up. The three questions a multi-Spark operator asks are how much
+ * accelerator memory is committed across the fleet, whether the GPUs are
+ * actually working, and whether the fabric between them is carrying anything —
+ * so those are the three panels, each with the per-node split underneath, since
+ * an aggregate hides the case where one node does all the work.
+ */
+function clusterSummary(snap: ClusterSnapshot, W: number): string[] {
+  const online = snap.nodes.filter((n) => n.status === "online");
+  if (online.length < 2) return [];
+
+  const cols = W >= 150 ? 3 : W >= 100 ? 3 : 0;
+  if (!cols) return [];
+  const each = Math.floor((W - 2 * (cols - 1)) / cols);
+  const inner = each - 4;
+  if (inner < 18) return [];
+
+  const t = snap.totals;
+  const gaugeH = 2;
+  const nameW = Math.max(...online.map((n) => n.label.length));
+
+  // --- Unified memory ------------------------------------------------------
+  const vramPct = pctOf(t.vramUsedBytes, t.vramTotalBytes);
+  const vram = [
+    `${bold(toneFor(vramPct)(fmtBytes(t.vramUsedBytes)))}${dim(` / ${fmtBytes(t.vramTotalBytes)}`)}`,
+    ...gauge(vramPct, inner, gaugeH, toneRgbFor(vramPct)),
+    ...online.map((n) => {
+      const p = n.gpu ? pctOf(n.gpu.vramUsedBytes, n.gpu.vramTotalBytes) : 0;
+      return `${dim(padEnd(truncate(n.label, nameW), nameW))} ${bar(p, Math.max(4, inner - nameW - 10), toneFor(p))}${padStart(fmtBytes(n.gpu?.vramUsedBytes ?? 0), 9)}`;
+    }),
+  ];
+
+  // --- GPU -----------------------------------------------------------------
+  const gpuMean = online.reduce((a, n) => a + (n.gpu?.utilPct ?? 0), 0) / online.length;
+  const gpu = [
+    `${bold(toneFor(gpuMean)(`${gpuMean.toFixed(0)}%`))}${dim(` mean · ${t.gpus} GPU${t.gpus === 1 ? "" : "s"}`)}`,
+    ...gauge(gpuMean, inner, gaugeH, toneRgbFor(gpuMean)),
+    ...online.map((n) => {
+      const p = n.gpu?.utilPct ?? 0;
+      return `${dim(padEnd(truncate(n.label, nameW), nameW))} ${bar(p, Math.max(4, inner - nameW - 10), toneFor(p))}${padStart(`${p.toFixed(0)}%`, 9)}`;
+    }),
+  ];
+
+  // --- Fabric --------------------------------------------------------------
+  const cap = snap.fabric.totalCapacityGbps;
+  const fabPct = cap > 0 ? (snap.fabric.totalTrafficGbps / cap) * 100 : 0;
+  const confirmed = snap.fabric.links.filter((l) => l.confirmed).length;
+  const fabric = [
+    `${bold(C.series3(fmtGbps(snap.fabric.totalTrafficGbps)))}${dim(` / ${cap}G`)}`,
+    ...gauge(fabPct, inner, gaugeH, TONE.series3),
+    ...(snap.fabric.links.length
+      ? snap.fabric.links.slice(0, online.length + 2).map((l) => {
+          const total = l.aToBGbps + l.bToAGbps;
+          const p = l.rateGbps > 0 ? (total / l.rateGbps) * 100 : 0;
+          // Interface names run longer than hostnames, so this column is sized
+          // for them rather than borrowing the node-name width.
+          const devW = Math.min(14, Math.max(...snap.fabric.links.map((x) => x.a.netdev.length)));
+          return `${dim(padEnd(truncate(l.a.netdev, devW), devW))} ${bar(p, Math.max(4, inner - devW - 12), C.series3)}${padStart(fmtGbps(total), 11)}`;
+        })
+      : [dim("no links resolved")]),
+    dim(`${snap.fabric.links.length} link${snap.fabric.links.length === 1 ? "" : "s"} · ${confirmed} confirmed`),
+  ];
+
+  /*
+   * Pad every body to the tallest before boxing, so the three boxes close on
+   * the same row. Ragged bottom borders make a row of panels read as three
+   * unrelated things rather than one band.
+   */
+  const bodies = [vram, gpu, fabric];
+  const tallest = Math.max(...bodies.map((b) => b.length));
+  for (const b of bodies) while (b.length < tallest) b.push("");
+
+  const blocks = [
+    { lines: panel("Unified memory", vram, each), width: each },
+    { lines: panel("GPU", gpu, each), width: each },
+    { lines: panel("Fabric", fabric, each, C.series3), width: each },
+  ];
+  return [...columns(blocks, 2), ""];
+}
+
 function overview(snap: ClusterSnapshot, nodes: NodeSnapshot[], st: RenderState, W: number): string[] {
   // Everything below is laid out against a box interior.
   const I = W - 4;
   const out: string[] = [...trends(snap, st, W)];
+  // Only when looking at the fleet: drilled into one node, the totals would
+  // just restate that node's own figures.
+  if (nodes.length === snap.nodes.length) out.push(...clusterSummary(snap, W));
 
   const nodeBody: string[] = [];
   nodes.forEach((n, i) => {
