@@ -4,10 +4,12 @@
  * This is the only part of sparktop that changes state on a node, and it is
  * treated accordingly.
  *
- *  - **Off by default.** Enabled with SPARKTOP_ENABLE_CONTROL=1. The dashboard
- *    binds 0.0.0.0 with no auth on the assumption it sits on a trusted LAN,
- *    which is fine for reading metrics and emphatically not fine for "stop any
- *    container" or "run this image". Opting in is a deliberate act.
+ *  - **On by default, and switchable off.** A dashboard that can see a wedged
+ *    container but not restart it sends you to a terminal for the one thing you
+ *    came here to do. SPARKTOP_DISABLE_CONTROL=1 turns it off where the
+ *    dashboard is visible to people who should only read it, and the server
+ *    says at startup when controls are live without a token on a non-loopback
+ *    interface.
  *  - **Every action is previewable.** Each returns the exact shell command it
  *    would run, and `dryRun` returns that command without executing, so an
  *    operator can see precisely what is about to happen to a machine that may
@@ -40,9 +42,7 @@ const IMAGE_RE = /^[a-zA-Z0-9][a-zA-Z0-9._\-/]{0,255}(:[a-zA-Z0-9._-]{1,128})?(@
 
 export class ControlDisabledError extends Error {
   constructor() {
-    super(
-      "Control operations are disabled. Set SPARKTOP_ENABLE_CONTROL=1 on the sparktop server to allow them."
-    );
+    super("Control operations are turned off. Unset SPARKTOP_DISABLE_CONTROL on the sparktop server to allow them.");
     this.name = "ControlDisabledError";
   }
 }
@@ -54,8 +54,23 @@ export class InvalidTargetError extends Error {
   }
 }
 
+/**
+ * Whether container control is available.
+ *
+ * On by default: a dashboard that can see a wedged container but not restart it
+ * sends you to a terminal for the one thing you wanted to do from here, and the
+ * actions are the ordinary ones an operator already has over their own machines
+ * — start, stop, restart, change image. Every one is confirmed twice in the UI
+ * and validated against a strict pattern before it reaches a command line.
+ *
+ * `SPARKTOP_DISABLE_CONTROL=1` turns it off for a deployment where the
+ * dashboard is reachable by people who should only read it. The server warns at
+ * startup when controls are live on an interface that is not loopback and no
+ * token is set, since that combination lets anyone on the network stop a
+ * container.
+ */
 export function controlEnabled(): boolean {
-  return process.env.SPARKTOP_ENABLE_CONTROL === "1";
+  return process.env.SPARKTOP_DISABLE_CONTROL !== "1";
 }
 
 export function assertContainer(id: string): string {

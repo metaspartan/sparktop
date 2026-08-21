@@ -33,12 +33,18 @@ credentials rather than in the metrics:
   trusted LAN. Set `SPARKTOP_TOKEN` to require a bearer token on the API and
   WebSocket. Do that before exposing it to anything wider.
 
-- **Container control is opt-in.** Starting, stopping and re-imaging containers
-  is disabled unless `SPARKTOP_ENABLE_CONTROL=1`. Reading metrics without auth is
-  a defensible default; stopping a container without auth is not, which is why
-  the capability is off rather than merely confirm-on-click. Container names and
-  image references are validated against strict patterns before they reach a
-  command line — never escaped and interpolated.
+- **Container control is on by default and can be switched off.** Starting,
+  stopping and re-imaging containers is available unless
+  `SPARKTOP_DISABLE_CONTROL=1`. These are the ordinary actions an operator
+  already has over their own machines, and every one is confirmed twice in the
+  UI. Container names and image references are validated against strict patterns
+  before they reach a command line — never escaped and interpolated.
+
+  Reading metrics without auth is a defensible default on a trusted LAN;
+  stopping a container without auth is a decision worth making deliberately. The
+  server reports at startup when controls are live, no token is set, and it is
+  bound to a non-loopback interface. Set `SPARKTOP_TOKEN` or bind to
+  `127.0.0.1` if that combination is not what you want.
 
 - **The container runs read-only**, as a non-root user, with all capabilities
   dropped.

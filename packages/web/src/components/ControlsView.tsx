@@ -130,17 +130,21 @@ export function ControlsView({ nodes }: { nodes: NodeSnapshot[] }) {
         <Card title="Controls">
           <div className="space-y-2 text-[12px] leading-relaxed text-ink-secondary">
             <p>
-              Control operations are <span className="font-semibold text-ink">disabled</span>. Viewing
-              images and building plans still works; anything that changes a node is refused.
+              Control operations have been <span className="font-semibold text-ink">turned off</span> on
+              this server. Viewing images and building plans still works; anything that changes a node is
+              refused.
             </p>
             <p className="text-ink-muted">
-              The dashboard is unauthenticated by default, which is reasonable for reading metrics and
-              not for stopping containers on machines that may be serving traffic. Enable deliberately:
+              They are available by default. Someone set <code>SPARKTOP_DISABLE_CONTROL=1</code>, which is
+              what to remove if this dashboard should be able to act:
             </p>
             <pre className="overflow-x-auto rounded-lg bg-surface-2 p-3 text-[11px] text-ink">
-{`SPARKTOP_ENABLE_CONTROL=1 bun run start
-# and set SPARKTOP_TOKEN if the dashboard is reachable
-# by anyone you would not hand a root shell`}
+{`# controls are on unless this is set
+SPARKTOP_DISABLE_CONTROL=1
+
+# set a token if the dashboard is reachable by
+# anyone you would not hand a root shell
+SPARKTOP_TOKEN=...`}
             </pre>
           </div>
         </Card>

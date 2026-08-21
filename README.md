@@ -144,8 +144,8 @@ Non-Spark NVIDIA hosts work too — you simply get no fabric section for them.
 - **Everything you would expect**: GPU utilisation, unified memory, per-core CPU, every thermal sensor, disks, Docker containers, and network interfaces.
 
 It keeps [durable history](#run-history) in SQLite, exports
-[Prometheus metrics](#prometheus), and can [manage containers](#controls) when
-you opt in.
+[Prometheus metrics](#prometheus), and can [manage containers](#controls) —
+start, stop, restart, swap image — from the same place.
 
 ## Interconnect
 
@@ -464,16 +464,22 @@ Settings → Updates.
 
 ## Controls
 
-Container lifecycle and image swapping, **disabled by default**:
+Container lifecycle and image swapping, **available by default**. Restarting
+your own container is ordinary operator work, and a dashboard that can see a
+wedged one but not act on it sends you to a terminal for the only thing you
+came here to do.
+
+Turn it off where the dashboard is read-only to its audience:
 
 ```bash
-SPARKTOP_ENABLE_CONTROL=1 bun run start
+SPARKTOP_DISABLE_CONTROL=1 bun run start
 ```
 
-The dashboard is unauthenticated by default. That is reasonable for reading
-metrics and not for stopping containers, so the capability is opt-in rather than
-merely confirm-on-click. Set `SPARKTOP_TOKEN` as well if the dashboard is
-reachable by anyone you would not hand a shell.
+The dashboard is unauthenticated by default, so the combination worth thinking
+about is controls live, no token, and bound to every interface — then anyone who
+can reach the port can stop a container. The server says so at startup when that
+is the case. Set `SPARKTOP_TOKEN`, bind to `127.0.0.1`, or disable controls if
+the dashboard is reachable by people you would not hand a shell.
 
 What it does:
 
@@ -507,7 +513,7 @@ Everything is optional; nodes can also be managed at runtime through the API or 
 | `SPARKTOP_SSH_PASSWORD` | — | Password auth (needs `SPARKTOP_SECRET`) |
 | `SPARKTOP_SECRET` | — | Key for encrypting stored credentials |
 | `SPARKTOP_TOKEN` | — | If set, API and WebSocket require this bearer token |
-| `SPARKTOP_ENABLE_CONTROL` | — | `1` allows container start/stop/restart and image swaps |
+| `SPARKTOP_DISABLE_CONTROL` | — | `1` refuses container start/stop/restart and image swaps |
 | `SPARKTOP_COMMIT` | from git | Commit this build came from. Set as a Docker build arg, since `.git` is not in the image |
 | `SPARKTOP_PORT` | `5757` | Listen port |
 | `SPARKTOP_HOST` | `0.0.0.0` | Bind address |

@@ -190,14 +190,22 @@ function Header({
 function SummaryStrip({ snap }: { snap: ClusterSnapshot }) {
   const t = snap.totals;
   const vramPct = pctOf(t.vramUsedBytes, t.vramTotalBytes);
+  /*
+   * A single Spark has ports but no interconnect, so a fabric figure would read
+   * "0 Gbps of 0 Gbps" — a measurement of something that does not exist. The
+   * slot is given to whatever is actually informative for that setup instead.
+   */
+  const hasFabric = snap.fabric.totalCapacityGbps > 0;
   const items: { label: string; value: string; sub?: string; pct?: number; tone?: "series-3" | "accent" | "warning" | "critical" }[] = [
-    {
-      label: "Fabric",
-      value: fmtGbps(snap.fabric.totalTrafficGbps),
-      sub: `of ${snap.fabric.totalCapacityGbps.toFixed(0)} Gbps`,
-      pct: pctOf(snap.fabric.totalTrafficGbps, snap.fabric.totalCapacityGbps),
-      tone: "series-3",
-    },
+    ...(hasFabric
+      ? [{
+          label: "Fabric",
+          value: fmtGbps(snap.fabric.totalTrafficGbps),
+          sub: `of ${snap.fabric.totalCapacityGbps.toFixed(0)} Gbps`,
+          pct: pctOf(snap.fabric.totalTrafficGbps, snap.fabric.totalCapacityGbps),
+          tone: "series-3" as const,
+        }]
+      : []),
     { label: "VRAM", value: fmtBytes(t.vramUsedBytes), sub: `of ${fmtBytes(t.vramTotalBytes)}`, pct: vramPct, tone: utilTone(vramPct) },
     { label: "CPU", value: fmtPct(t.cpuUsagePct, 0), sub: `${t.cpuCores} cores`, pct: t.cpuUsagePct, tone: utilTone(t.cpuUsagePct) },
     { label: "Temp", value: fmtTemp(t.maxTempC), sub: "peak" },

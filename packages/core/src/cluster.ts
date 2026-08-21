@@ -117,20 +117,36 @@ export class ClusterMonitor extends EventEmitter {
     c.start();
   }
 
+  private lastEmit = 0;
+
   /**
-   * Coalesce per-node updates into one cluster broadcast.
+   * Coalesce per-node updates into one cluster broadcast, at a bounded rate.
    *
-   * Nodes poll independently, so without this a four-node cluster would emit
-   * four nearly identical snapshots per interval.
+   * Nodes poll independently and their phases drift apart, so a short debounce
+   * only merges the polls that happen to coincide: measured on two nodes it
+   * still produced 1.7 broadcasts a second, and the rate grows with the node
+   * count. Each broadcast is the whole cluster — about 10 KB per node — sent to
+   * every connected client, so an eight-node fleet would have pushed better
+   * than half a megabyte a second at each open browser tab.
+   *
+   * A floor on the gap between broadcasts fixes the rate at roughly one per
+   * poll interval however many nodes there are. Nothing is lost: the next
+   * broadcast carries the newest reading from every node, and a dashboard
+   * refreshing at 1Hz has no use for four versions of the same second.
    */
   private scheduleEmit(): void {
     if (this.emitTimer) return;
+    // Just under the poll interval, so a steady 1Hz cluster emits every poll
+    // rather than skipping one and appearing to stutter.
+    const minGap = Math.max(50, (this.cfg.fastIntervalMs ?? 1000) * 0.9);
+    const wait = Math.max(50, this.lastEmit + minGap - Date.now());
     this.emitTimer = setTimeout(() => {
       this.emitTimer = null;
+      this.lastEmit = Date.now();
       const s = this.build();
       this.lastSnapshot = s;
       this.emit("snapshot", s);
-    }, 50);
+    }, wait);
   }
 
   /**

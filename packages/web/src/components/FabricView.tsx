@@ -170,6 +170,31 @@ function Topology({ snap }: { snap: ClusterSnapshot }) {
     return <p className="py-8 text-center text-sm text-ink-muted">No nodes configured.</p>;
   }
 
+  /*
+   * One Spark has no interconnect to draw. Saying so — and pointing at the
+   * ports it does have — is more use than a lone card floating with no cables,
+   * which reads as a diagram that failed to load.
+   */
+  if (nodes.length === 1) {
+    const only = nodes[0]!;
+    const ports = only.fabric.ports.length;
+    return (
+      <div className="flex flex-col items-center gap-3 py-6">
+        <TopologySolo node={only} />
+        <p className="max-w-sm text-center text-[12px] leading-relaxed text-ink-muted">
+          {ports > 0 ? (
+            <>
+              A single Spark has no interconnect. Its {ports} RDMA port{ports === 1 ? "" : "s"} are listed
+              below — add a second node and any cable between them is detected automatically.
+            </>
+          ) : (
+            <>This node reports no RDMA ports, so there is no Spark fabric to show.</>
+          )}
+        </p>
+      </div>
+    );
+  }
+
   // Offset parallel links between the same pair so both are visible.
   const pairSeen = new Map<string, number>();
 
@@ -305,6 +330,27 @@ function Topology({ snap }: { snap: ClusterSnapshot }) {
       {nodes.map((n) => (
         <TopologyNode key={n.id} node={n} pos={pos.get(n.id)} width={NW} height={NH} />
       ))}
+    </svg>
+  );
+}
+
+/** The single-node case: one card, centred, no cables. */
+function TopologySolo({ node }: { node: ClusterSnapshot["nodes"][number] }) {
+  const NW = 176;
+  const NH = 150;
+  return (
+    <svg viewBox={`0 0 ${NW + 24} ${NH + 24}`} width={NW + 24} height={NH + 24} role="img"
+      aria-label={`${node.label} topology`}>
+      <defs>
+        <linearGradient id="topo-card" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="var(--surface-2)" />
+          <stop offset="100%" stopColor="var(--surface-1)" />
+        </linearGradient>
+        <filter id="topo-shadow" x="-30%" y="-30%" width="160%" height="180%">
+          <feDropShadow dx="0" dy="2" stdDeviation="3" floodColor="#000" floodOpacity="0.28" />
+        </filter>
+      </defs>
+      <TopologyNode node={node} pos={{ x: (NW + 24) / 2, y: (NH + 24) / 2 }} width={NW} height={NH} />
     </svg>
   );
 }

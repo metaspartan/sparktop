@@ -97,14 +97,62 @@ const durable =
 
 let latest: ClusterSnapshot | null = null;
 
+/**
+ * Report a repeating fault once, then rarely, then once more when it clears.
+ *
+ * Anything on the snapshot path runs about once a second, so logging a failure
+ * where it happens turns a stuck disk into ~86,000 identical lines a day —
+ * unbounded in `docker logs`, and burying whatever else went wrong. The first
+ * occurrence is worth a line; the ten-thousandth is worth a count.
+ */
+function makeFaultLog(what: string, quietMs = 60_000) {
+  // Null rather than 0 for "not currently failing": zero is a legitimate
+  // timestamp, and using it as the sentinel makes the first report fire twice
+  // for anyone whose clock is at the epoch.
+  let since: number | null = null;
+  let lastShown = 0;
+  let suppressed = 0;
+  return {
+    fail(message: string): void {
+      const now = Date.now();
+      if (since === null) {
+        since = now;
+        lastShown = now;
+        suppressed = 0;
+        console.error(`sparktop: ${what} failed: ${message}`);
+        return;
+      }
+      suppressed++;
+      if (now - lastShown >= quietMs) {
+        const mins = Math.round((now - since) / 60_000);
+        console.error(
+          `sparktop: ${what} still failing after ${mins}m (${suppressed} further occurrences): ${message}`
+        );
+        lastShown = now;
+        suppressed = 0;
+      }
+    },
+    ok(): void {
+      if (since === null) return;
+      const mins = Math.round((Date.now() - since) / 60_000);
+      console.error(`sparktop: ${what} recovered after ${mins}m`);
+      since = null;
+      suppressed = 0;
+    },
+  };
+}
+
+const historyFault = makeFaultLog("history write");
+
 monitor.on("snapshot", (snap) => {
   latest = snap;
   history.record(snap);
   try {
     durable?.record(snap);
+    historyFault.ok();
   } catch (e) {
     // A failing disk must not take the live dashboard down with it.
-    console.error("sparktop: history write failed:", (e as Error).message);
+    historyFault.fail((e as Error).message);
   }
   broadcast({ type: "snapshot", data: snap });
 });
@@ -338,11 +386,11 @@ const server = Bun.serve<SocketData, never>({
       /*
        * Control plane.
        *
-       * These are the only routes that change a node, and they are gated by
-       * SPARKTOP_ENABLE_CONTROL. The dashboard is unauthenticated by default,
-       * which is acceptable for reading metrics and not for stopping
-       * containers, so the capability is opt-in rather than merely
-       * confirm-on-click.
+       * These are the only routes that change a node. Available by default,
+       * since restarting your own container is ordinary operator work, and
+       * switchable off with SPARKTOP_DISABLE_CONTROL for a deployment where
+       * the dashboard is read-only to its audience. Every action is validated
+       * against a strict pattern and confirmed twice in the UI.
        */
       if (pathname === "/api/control" && req.method === "GET") {
         return json({ enabled: controlEnabled(), tokenRequired: API_TOKEN !== "" });
@@ -599,3 +647,21 @@ console.log(`  config:  ${cfgPath}`);
 console.log(`  nodes:   ${config.nodes.length} (${config.nodes.map((n) => n.host).join(", ") || "none configured"})`);
 console.log(`  web ui:  ${existsSync(WEB_ROOT) ? WEB_ROOT : "not built (run: bun run build:web)"}`);
 if (!API_TOKEN) console.log("  auth:    disabled (set SPARKTOP_TOKEN to require a bearer token)");
+console.log(
+  `  control: ${controlEnabled() ? "enabled" : "disabled (SPARKTOP_DISABLE_CONTROL=1)"}`
+);
+/*
+ * Controls are on by default, which is right for the usual case — your own
+ * Sparks on your own LAN. The combination worth naming out loud is controls
+ * live, no token, and bound to every interface: then anyone who can reach the
+ * port can stop a container. Said once at startup rather than turned into a
+ * banner in the UI, where it would be noise for the many people it does not
+ * apply to.
+ */
+if (controlEnabled() && !API_TOKEN && HOST !== "127.0.0.1" && HOST !== "localhost") {
+  console.log(
+    "  note:    container controls are reachable without a token on this interface.\n" +
+      "           Set SPARKTOP_TOKEN, bind to 127.0.0.1, or set SPARKTOP_DISABLE_CONTROL=1\n" +
+      "           if this dashboard is visible to people who should only read it."
+  );
+}
