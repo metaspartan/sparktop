@@ -240,3 +240,106 @@ body {
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
+
+/*
+ * Topology diagram.
+ *
+ * The point of the animation is legibility, not decoration: snapshots arrive
+ * about once a second, so an un-animated meter steps discontinuously and the
+ * eye reads it as a glitch rather than as movement. Transitioning the width
+ * turns the same data into something continuous, and a slow halo on a healthy
+ * node keeps the diagram legibly live even while the numbers hold steady.
+ *
+ * Every rule here is dropped under prefers-reduced-motion. Motion is the whole
+ * mechanism, so there is nothing to soften — it simply goes.
+ */
+.topo-meter {
+  transition: width 700ms cubic-bezier(0.22, 1, 0.36, 1), fill 400ms ease;
+}
+
+.topo-node {
+  transition: opacity 400ms ease;
+}
+
+/*
+ * The halo behind a machine.
+ *
+ * Breathing rather than blinking: a long, eased cycle reads as something alive
+ * and idling, where a fast pulse would read as an alarm. Peak opacity is set
+ * per node from GPU load, so a busy box glows harder than a quiet one and the
+ * animation carries information instead of only decoration.
+ */
+.topo-halo {
+  --halo-peak: 0.08;
+  animation: topo-halo 4.2s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+  pointer-events: none;
+  transition: fill 500ms ease;
+  /* Softened at the edge so it reads as light around the card rather than as a
+     second, larger card sitting behind the first. */
+  filter: blur(7px);
+}
+
+@keyframes topo-halo {
+  0%,
+  100% {
+    transform: scale(0.94);
+    opacity: calc(var(--halo-peak) * 0.4);
+  }
+  50% {
+    transform: scale(1.03);
+    opacity: var(--halo-peak);
+  }
+}
+
+/* Drawn behind the solid status dot, so it reads as a halo rather than a
+   flashing light. */
+.topo-pulse {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: topo-pulse 2.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  pointer-events: none;
+}
+
+@keyframes topo-pulse {
+  0% {
+    transform: scale(1);
+    opacity: 0.55;
+  }
+  70% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+
+/* Active cables. The dash offset is animated by SMIL on the element itself so
+   its speed can track utilisation; this only adds the glow. */
+.topo-link-active {
+  filter: drop-shadow(0 0 3px currentColor);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .topo-meter {
+    transition: none;
+  }
+  .topo-pulse {
+    animation: none;
+    opacity: 0.35;
+  }
+  .topo-link-active {
+    filter: none;
+  }
+  .topo-node {
+    transition: none;
+  }
+  .topo-halo {
+    animation: none;
+    opacity: var(--halo-peak);
+    transform: none;
+  }
+}

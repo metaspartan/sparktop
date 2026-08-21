@@ -27,6 +27,16 @@ const HAS_PHOTO: ReadonlySet<SparkVariantId> = new Set<SparkVariantId>([
 
 const photoUrl = (id: SparkVariantId): string => `${import.meta.env.BASE_URL}variants/${id}.webp`;
 
+/**
+ * The chassis photo for a variant, or null when there is none.
+ *
+ * Exported for callers that cannot use the component — the topology diagram
+ * draws into SVG, where an `<image>` needs the URL rather than an `<img>`.
+ */
+export function variantPhoto(variant: SparkVariantId): string | null {
+  return HAS_PHOTO.has(variant) ? photoUrl(variant) : null;
+}
+
 export function VariantIcon({
   variant,
   title,

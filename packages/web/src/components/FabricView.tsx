@@ -6,11 +6,12 @@
  * now in each direction.
  */
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ClusterSnapshot, FabricLink } from "@sparktop/core";
-import { fmtGbps } from "@sparktop/core";
+import { fmtBytes, fmtGbps } from "@sparktop/core";
 import { Badge, Card, LegendItem, Meter } from "./primitives";
 import { TimeChart, type ChartSeries } from "./TimeChart";
+import { variantPhoto } from "./VariantIcon";
 import type { HistoryPayload } from "@sparktop/core";
 
 interface Props {
@@ -107,12 +108,44 @@ function linkLabels(links: FabricLink[]): Map<string, string> {
  * Two nodes sit side by side (the direct-attach Spark case); more are placed on
  * a circle so every link stays visible.
  */
+/**
+ * Whether the viewer has asked for reduced motion.
+ *
+ * CSS handles the declarative animations, but the flow along a cable is SMIL —
+ * driven by an `<animate>` element whose duration tracks utilisation — and a
+ * media query cannot switch that off. It has to be read here and the element
+ * left unrendered.
+ */
+function usePrefersReducedMotion(): boolean {
+  const [reduced, setReduced] = useState(
+    () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+  useEffect(() => {
+    if (typeof matchMedia !== "function") return;
+    const mq = matchMedia("(prefers-reduced-motion: reduce)");
+    const onChange = () => setReduced(mq.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+  return reduced;
+}
+
 function Topology({ snap }: { snap: ClusterSnapshot }) {
   const nodes = snap.nodes;
-  const W = 640;
-  const H = Math.max(220, nodes.length > 2 ? 380 : 220);
-  const NW = 132;
-  const NH = 62;
+  const reducedMotion = usePrefersReducedMotion();
+  /*
+   * The canvas is sized to the layout rather than fixed.
+   *
+   * An SVG scales to its container, so every unused unit in the viewBox shrinks
+   * the text along with it. A pair sitting side by side needs only enough gap
+   * for the link labels; spending 640 units on it made 11px type render at
+   * eight and the card read as a thumbnail.
+   */
+  const NW = 176;
+  const NH = 150;
+  const many = nodes.length > 2;
+  const W = many ? 700 : 520;
+  const H = many ? 480 : 260;
 
   const pos = useMemo(() => {
     const m = new Map<string, { x: number; y: number }>();
@@ -124,7 +157,7 @@ function Topology({ snap }: { snap: ClusterSnapshot }) {
     } else {
       const cx = W / 2;
       const cy = H / 2;
-      const r = Math.min(W, H) / 2 - NH;
+      const r = Math.min(W, H) / 2 - NH * 0.75;
       nodes.forEach((n, i) => {
         const a = (i / nodes.length) * Math.PI * 2 - Math.PI / 2;
         m.set(n.id, { x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) });
@@ -143,6 +176,17 @@ function Topology({ snap }: { snap: ClusterSnapshot }) {
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ maxHeight: H }} role="img"
       aria-label="Cluster interconnect topology">
+      <defs>
+        {/* A top-lit card rather than a flat rectangle: the diagram is the
+            centrepiece of this view and reads as a surface, not a wireframe. */}
+        <linearGradient id="topo-card" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="var(--surface-2)" />
+          <stop offset="100%" stopColor="var(--surface-1)" />
+        </linearGradient>
+        <filter id="topo-shadow" x="-30%" y="-30%" width="160%" height="180%">
+          <feDropShadow dx="0" dy="2" stdDeviation="3" floodColor="#000" floodOpacity="0.28" />
+        </filter>
+      </defs>
       {snap.fabric.links.map((l, i) => {
         const a = pos.get(l.a.nodeId);
         const b = pos.get(l.b.nodeId);
@@ -165,8 +209,23 @@ function Topology({ snap }: { snap: ClusterSnapshot }) {
         const total = l.aToBGbps + l.bToAGbps;
         const width = l.active ? Math.min(7, 2 + (l.utilPct / 100) * 5) : 2;
 
+        const pathId = `topo-path-${i}`;
+        /*
+         * Motion at two speeds.
+         *
+         * An active cable gets a dash flow whose rate tracks utilisation, plus
+         * carriers riding the path. An idle one keeps a single slow carrier: a
+         * cable that is up but quiet is a different state from one that is
+         * down, and a completely static line cannot say which it is. The idle
+         * drift is deliberately slow enough to read as a heartbeat rather than
+         * as traffic.
+         */
+        const carriers = l.active ? Math.min(3, 1 + Math.floor(l.utilPct / 35)) : 1;
+        const carrierDur = l.active ? Math.max(0.9, 3.4 - (l.utilPct / 100) * 2.6) : 7.5;
+
         return (
           <g key={l.id}>
+            <path id={pathId} d={d} fill="none" stroke="none" />
             <path d={d} fill="none" stroke="var(--axis)" strokeWidth={width + 2} strokeLinecap="round" opacity={0.5} />
             <path
               d={d}
@@ -177,8 +236,11 @@ function Topology({ snap }: { snap: ClusterSnapshot }) {
               opacity={l.active ? 1 : 0.34}
               // Dash animation reads as flow; speed tracks utilisation.
               strokeDasharray={l.active ? "10 8" : undefined}
+              className={l.active && !reducedMotion ? "topo-link-active" : undefined}
+              // currentColor drives the glow filter, which cannot read `stroke`.
+              style={l.active ? { color } : undefined}
             >
-              {l.active && (
+              {l.active && !reducedMotion && (
                 <animate
                   attributeName="stroke-dashoffset"
                   from="18"
@@ -188,6 +250,37 @@ function Topology({ snap }: { snap: ClusterSnapshot }) {
                 />
               )}
             </path>
+
+            {!reducedMotion &&
+              l.up &&
+              Array.from({ length: carriers }, (_, k) => (
+                <circle key={k} r={l.active ? 2.6 : 1.9} fill={color} opacity={l.active ? 0.95 : 0.5}>
+                  <animateMotion
+                    dur={`${carrierDur}s`}
+                    repeatCount="indefinite"
+                    // Stagger so several carriers are spaced along the cable
+                    // rather than stacked on top of each other.
+                    begin={`${(k * carrierDur) / carriers}s`}
+                    rotate="auto"
+                  >
+                    {/* Both forms: SVG 2 defines `href` on mpath, but browsers
+                        still resolve only the xlink form, and without it the
+                        carrier silently never moves. */}
+                    <mpath href={`#${pathId}`} xlinkHref={`#${pathId}`} />
+                  </animateMotion>
+                  {!l.active && (
+                    // A quiet carrier fades in and out as it travels, so it
+                    // reads as a probe rather than as a payload.
+                    <animate
+                      attributeName="opacity"
+                      values="0;0.5;0.5;0"
+                      dur={`${carrierDur}s`}
+                      begin={`${(k * carrierDur) / carriers}s`}
+                      repeatCount="indefinite"
+                    />
+                  )}
+                </circle>
+              ))}
             <text
               x={mx}
               y={my - 8}
@@ -209,40 +302,210 @@ function Topology({ snap }: { snap: ClusterSnapshot }) {
         );
       })}
 
-      {nodes.map((n) => {
-        const p = pos.get(n.id);
-        if (!p) return null;
-        const online = n.status === "online";
-        const dot = online
-          ? "var(--status-good)"
-          : n.status === "error"
-            ? "var(--status-critical)"
-            : "var(--text-muted)";
-        return (
-          <g key={n.id} transform={`translate(${p.x - NW / 2}, ${p.y - NH / 2})`}>
-            <rect
-              width={NW}
-              height={NH}
-              rx={10}
-              fill="var(--surface-2)"
-              stroke="var(--border)"
-              strokeWidth={1}
-            />
-            <circle cx={13} cy={15} r={4} fill={dot} />
-            <text x={24} y={19} style={{ fontSize: 12, fontWeight: 600, fill: "var(--text-primary)" }}>
-              {truncate(n.label, 13)}
-            </text>
-            <text x={13} y={36} style={{ fontSize: 10, fill: "var(--text-secondary)" }}>
-              {n.gpu ? `GPU ${n.gpu.utilPct.toFixed(0)}%` : "no GPU"}
-              {n.thermal.maxC !== null ? ` · ${n.thermal.maxC.toFixed(0)}°C` : ""}
-            </text>
-            <text x={13} y={51} style={{ fontSize: 10, fill: "var(--text-muted)" }}>
-              {n.host}
-            </text>
-          </g>
-        );
-      })}
+      {nodes.map((n) => (
+        <TopologyNode key={n.id} node={n} pos={pos.get(n.id)} width={NW} height={NH} />
+      ))}
     </svg>
+  );
+}
+
+/** A meter inside the topology card. Width transitions, so values glide. */
+function NodeMeter({
+  x,
+  y,
+  w,
+  pct,
+  label,
+  value,
+  tone,
+}: {
+  x: number;
+  y: number;
+  w: number;
+  pct: number;
+  label: string;
+  value: string;
+  tone: string;
+}) {
+  const clamped = Math.max(0, Math.min(100, pct));
+  return (
+    <g>
+      <text x={x} y={y - 4} style={{ fontSize: 9, fill: "var(--text-muted)" }}>
+        {label}
+      </text>
+      <text x={x + w} y={y - 4} textAnchor="end" className="tnum" style={{ fontSize: 9, fill: "var(--text-secondary)" }}>
+        {value}
+      </text>
+      <rect x={x} y={y} width={w} height={4} rx={2} fill="var(--surface-3, var(--axis))" opacity={0.55} />
+      {/* The width is the only thing that changes between snapshots, so a CSS
+          transition on it turns a 1Hz step into a continuous movement. */}
+      <rect x={x} y={y} width={(w * clamped) / 100} height={4} rx={2} fill={tone} className="topo-meter" />
+    </g>
+  );
+}
+
+function TopologyNode({
+  node: n,
+  pos: p,
+  width: NW,
+  height: NH,
+}: {
+  node: ClusterSnapshot["nodes"][number];
+  pos: { x: number; y: number } | undefined;
+  width: number;
+  height: number;
+}) {
+  if (!p) return null;
+  const online = n.status === "online";
+  const dot = online
+    ? "var(--status-good)"
+    : n.status === "error"
+      ? "var(--status-critical)"
+      : "var(--text-muted)";
+
+  const g = n.gpu;
+  const gpuPct = g?.utilPct ?? 0;
+  const vramPct = g && g.vramTotalBytes > 0 ? (g.vramUsedBytes / g.vramTotalBytes) * 100 : 0;
+  const photo = n.info.isSpark ? variantPhoto(n.info.variant) : null;
+  const pad = 12;
+  const accent = gpuPct >= 90 ? "var(--status-warning)" : "var(--series-1)";
+
+  /*
+   * The halo is the machine's health, not its load.
+   *
+   * Green while a node is well, amber once something about it needs attention —
+   * so a rack of breathing green boxes can be scanned for the one that is not.
+   * Load is already carried by the meters and the card's border, and repeating
+   * it here would leave nothing to signal trouble with.
+   */
+  const unwell = (n.thermal.maxC ?? 0) >= 90 || vramPct >= 95;
+  const haloTone = unwell ? "var(--status-warning)" : "var(--accent)";
+
+  // Vertical rhythm: chassis, then identity, then the stats block, then the
+  // footer. Laid out as named offsets so a change to one does not silently
+  // overlap the next.
+  const imgH = 44;
+  const yName = imgH + 24;
+  const yStats = yName + 10;
+  const statsH = 46;
+
+  return (
+    <g transform={`translate(${p.x - NW / 2}, ${p.y - NH / 2})`} className="topo-node">
+      {/*
+        A halo behind the whole machine rather than beside its status dot.
+        Its strength follows GPU load, so a rack of cards acquires a glanceable
+        ordering — which box is working — before any number is read. Drawn
+        first, so it sits under the card.
+      */}
+      {online && (
+        <rect
+          x={-11}
+          y={-11}
+          width={NW + 22}
+          height={NH + 22}
+          rx={24}
+          fill={haloTone}
+          className="topo-halo"
+          style={{ ["--halo-peak" as string]: (0.06 + (gpuPct / 100) * 0.18).toFixed(3) }}
+        />
+      )}
+
+      <rect
+        width={NW}
+        height={NH}
+        rx={14}
+        fill="url(#topo-card)"
+        stroke={online && gpuPct >= 50 ? accent : "var(--border)"}
+        strokeWidth={1}
+        strokeOpacity={online && gpuPct >= 50 ? 0.45 : 1}
+        filter="url(#topo-shadow)"
+      />
+
+      {photo ? (
+        <image
+          href={photo}
+          x={NW / 2 - 46}
+          y={9}
+          width={92}
+          height={imgH}
+          preserveAspectRatio="xMidYMid meet"
+          opacity={online ? 1 : 0.35}
+        >
+          <title>{n.info.variantName}</title>
+        </image>
+      ) : (
+        <text
+          x={NW / 2}
+          y={imgH / 2 + 14}
+          textAnchor="middle"
+          style={{ fontSize: 10, fill: "var(--text-muted)" }}
+        >
+          {n.info.isSpark ? "DGX Spark" : "non-Spark host"}
+        </text>
+      )}
+
+      <circle cx={pad + 4} cy={yName - 4} r={3.5} fill={dot} />
+      <text x={pad + 13} y={yName} style={{ fontSize: 12, fontWeight: 600, fill: "var(--text-primary)" }}>
+        {truncate(n.label, 16)}
+      </text>
+
+      {/* The stats block: a recessed panel so the figures read as belonging to
+          the machine pictured above rather than floating on the card. */}
+      <rect
+        x={pad - 4}
+        y={yStats}
+        width={NW - (pad - 4) * 2}
+        height={statsH}
+        rx={8}
+        fill="var(--surface-1)"
+        opacity={0.65}
+      />
+      {g ? (
+        <>
+          <NodeMeter
+            x={pad}
+            y={yStats + 16}
+            w={NW - pad * 2}
+            pct={gpuPct}
+            label="GPU"
+            value={`${gpuPct.toFixed(0)}%`}
+            tone={accent}
+          />
+          <NodeMeter
+            x={pad}
+            y={yStats + 36}
+            w={NW - pad * 2}
+            pct={vramPct}
+            label="VRAM"
+            value={fmtBytes(g.vramUsedBytes)}
+            tone={vramPct >= 90 ? "var(--status-warning)" : "var(--series-3)"}
+          />
+        </>
+      ) : (
+        <text x={NW / 2} y={yStats + 27} textAnchor="middle" style={{ fontSize: 10, fill: "var(--text-muted)" }}>
+          {online ? "no GPU detected" : n.status}
+        </text>
+      )}
+
+      <text x={pad} y={NH - 9} style={{ fontSize: 9, fill: "var(--text-muted)" }}>
+        {n.host}
+      </text>
+      {n.thermal.maxC !== null && (
+        <text
+          x={NW - pad}
+          y={NH - 9}
+          textAnchor="end"
+          className="tnum"
+          style={{ fontSize: 9, fill: n.thermal.maxC >= 90 ? "var(--status-warning)" : "var(--text-muted)" }}
+        >
+          {n.thermal.maxC.toFixed(0)}°C
+        </text>
+      )}
+      <title>
+        {`${n.label} · ${n.host}${n.info.isSpark ? ` · ${n.info.variantName}` : ""}`}
+        {g ? ` · GPU ${gpuPct.toFixed(0)}% · VRAM ${fmtBytes(g.vramUsedBytes)} of ${fmtBytes(g.vramTotalBytes)}` : ""}
+      </title>
+    </g>
   );
 }
 
