@@ -423,6 +423,11 @@ second runs orders of magnitude larger — a fleet showing 109K generated agains
 that reached a model, with the ingested rate above it; the gap between the two
 is the prefix cache.
 
+The chart switches between **Live**, **24h**, **7d** and **30d**. Live is the
+in-memory ring at full resolution — whether something is happening right now.
+The longer windows come from the durable store, written once a minute, which is
+what says whether today looks like last week.
+
 History keeps `tokens`, `prefill`, `computed`, `running`, `queued` and `ttft`
 per endpoint, plus cluster totals, so a chart never has to sum a varying number
 of series.

@@ -51,7 +51,14 @@ export interface RunRecord {
 export interface SamplePoint {
   ts: number;
   endpointId: string;
+  /** Output tokens per second. */
   tokensPerSec: number;
+  /**
+   * Prompt tokens per second, and the part of them that reached a model. Null
+   * on rows written before these were recorded — an absent reading, not zero.
+   */
+  promptTokensPerSec: number | null;
+  promptComputedTokensPerSec: number | null;
   requestsRunning: number;
   kvCachePct: number | null;
 }
@@ -116,6 +123,26 @@ export class HistoryDb {
       CREATE INDEX IF NOT EXISTS samples_time ON samples (ts DESC);
       CREATE INDEX IF NOT EXISTS samples_endpoint ON samples (endpoint_id, ts DESC);
     `);
+
+    /*
+     * Columns added after the first release.
+     *
+     * `CREATE TABLE IF NOT EXISTS` does nothing to a table that already exists,
+     * so an upgrade has to add them explicitly — otherwise every existing
+     * install keeps the old shape and the new columns read as missing. They are
+     * nullable rather than defaulted: a row written before this existed has no
+     * input figure, and inventing a zero would draw a flat line through history
+     * that never happened.
+     */
+    this.addColumn("samples", "prompt_tokens_per_sec", "REAL");
+    this.addColumn("samples", "prompt_computed_tokens_per_sec", "REAL");
+  }
+
+  /** Add a column when it is not already present. */
+  private addColumn(table: string, column: string, type: string): void {
+    const cols = this.db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all();
+    if (cols.some((c) => c.name === column)) return;
+    this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
   }
 
   /**
@@ -230,14 +257,24 @@ export class HistoryDb {
 
   private writeSamples(ts: number, endpoints: InferenceEndpoint[]): void {
     const insert = this.db.query(
-      `INSERT INTO samples (ts, endpoint_id, node_id, tokens_per_sec, requests_running, kv_cache_pct)
-       VALUES (?, ?, ?, ?, ?, ?)`
+      `INSERT INTO samples (ts, endpoint_id, node_id, tokens_per_sec, requests_running, kv_cache_pct,
+                            prompt_tokens_per_sec, prompt_computed_tokens_per_sec)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     );
     // One transaction: a dozen endpoints should be one fsync, not a dozen.
     this.db.transaction(() => {
       for (const e of endpoints) {
         if (!e.reachable) continue;
-        insert.run(ts, e.id, e.nodeId, e.decodeTokensPerSec ?? e.generationTokensPerSec ?? 0, e.requestsRunning ?? 0, e.kvCachePct);
+        insert.run(
+          ts,
+          e.id,
+          e.nodeId,
+          e.decodeTokensPerSec ?? e.generationTokensPerSec ?? 0,
+          e.requestsRunning ?? 0,
+          e.kvCachePct,
+          e.prefillTokensPerSec,
+          e.prefillComputedTokensPerSec
+        );
       }
     })();
   }
@@ -299,25 +336,32 @@ export class HistoryDb {
 
   /** Samples since a cutoff, oldest first, for charting a long window. */
   samples(sinceMs: number, endpointId?: string): SamplePoint[] {
+    type Row = {
+      ts: number;
+      endpoint_id: string;
+      tokens_per_sec: number;
+      requests_running: number;
+      kv_cache_pct: number | null;
+      prompt_tokens_per_sec: number | null;
+      prompt_computed_tokens_per_sec: number | null;
+    };
+    const cols = `ts, endpoint_id, tokens_per_sec, requests_running, kv_cache_pct,
+                  prompt_tokens_per_sec, prompt_computed_tokens_per_sec`;
     const rows = endpointId
       ? this.db
-          .query<
-            { ts: number; endpoint_id: string; tokens_per_sec: number; requests_running: number; kv_cache_pct: number | null },
-            [number, string]
-          >(`SELECT ts, endpoint_id, tokens_per_sec, requests_running, kv_cache_pct FROM samples
-             WHERE ts >= ? AND endpoint_id = ? ORDER BY ts ASC`)
+          .query<Row, [number, string]>(
+            `SELECT ${cols} FROM samples WHERE ts >= ? AND endpoint_id = ? ORDER BY ts ASC`
+          )
           .all(sinceMs, endpointId)
       : this.db
-          .query<
-            { ts: number; endpoint_id: string; tokens_per_sec: number; requests_running: number; kv_cache_pct: number | null },
-            [number]
-          >(`SELECT ts, endpoint_id, tokens_per_sec, requests_running, kv_cache_pct FROM samples
-             WHERE ts >= ? ORDER BY ts ASC`)
+          .query<Row, [number]>(`SELECT ${cols} FROM samples WHERE ts >= ? ORDER BY ts ASC`)
           .all(sinceMs);
 
     return rows.map((r) => ({
       ts: r.ts,
       endpointId: r.endpoint_id,
+      promptTokensPerSec: r.prompt_tokens_per_sec,
+      promptComputedTokensPerSec: r.prompt_computed_tokens_per_sec,
       tokensPerSec: r.tokens_per_sec,
       requestsRunning: r.requests_running,
       kvCachePct: r.kv_cache_pct,

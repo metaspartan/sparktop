@@ -7,6 +7,7 @@
  * panel renders identically whatever is actually running.
  */
 
+import { useEffect, useMemo, useState } from "react";
 import type { HistoryPayload, InferenceEndpoint, NodeSnapshot } from "@sparktop/core";
 import { Badge, Card, LegendItem, Meter, Stat, utilTone } from "./primitives";
 import { TimeChart, type ChartSeries } from "./TimeChart";
@@ -150,43 +151,170 @@ export function InferenceView({ nodes, history, themeKey }: Props) {
         )}
       </Card>
 
-      {ioSeries.length > 0 && (
-        <Card
-          className="lg:col-span-2"
-          title="Input and output tokens"
-          right={
-            <div className="flex flex-wrap gap-2.5">
-              {ioSeries.map((s) => (
-                <LegendItem key={s.label} colorVar={s.colorVar} label={s.label} />
-              ))}
-            </div>
-          }
-        >
-          {ts.length > 1 ? (
-            <>
-              <TimeChart
-                ts={ts}
-                series={ioSeries}
-                height={168}
-                format={(v) => `${v.toFixed(1)} tok/s`}
-                tickFormat={(v) => compactTokens(v)}
-                minRange={10}
-                themeKey={themeKey}
-              />
-              <p className="mt-2 text-[11px] leading-relaxed text-ink-muted">
-                Output is what a request waits for. Input is plotted as the prompt tokens that reached a
-                model; the ingested line above it is everything the engine was handed, and the gap between
-                them is the prefix cache. A long conversation spends most of its input on the cheap line.
-              </p>
-            </>
-          ) : (
-            <div className="flex h-[168px] items-center justify-center text-[11px] text-ink-muted">
-              Collecting…
-            </div>
-          )}
-        </Card>
-      )}
+      <TokenHistoryCard live={{ ts, series: ioSeries }} themeKey={themeKey} />
     </div>
+  );
+}
+
+interface SamplePoint {
+  ts: number;
+  endpointId: string;
+  tokensPerSec: number;
+  promptTokensPerSec: number | null;
+  promptComputedTokensPerSec: number | null;
+}
+
+/** Live window plus the durable ones, which is the whole range this can show. */
+const RANGES = [
+  { key: "live", label: "Live", days: 0 },
+  { key: "24h", label: "24h", days: 1 },
+  { key: "7d", label: "7d", days: 7 },
+  { key: "30d", label: "30d", days: 30 },
+] as const;
+
+/**
+ * Input against output, over a selectable window.
+ *
+ * "Live" is the in-memory ring — a few minutes at full resolution, which is
+ * what tells you whether something is happening right now. The longer windows
+ * come from the durable store, written once a minute, which is what tells you
+ * whether today looks like last week.
+ */
+function TokenHistoryCard({
+  live,
+  themeKey,
+}: {
+  live: { ts: number[]; series: ChartSeries[] };
+  themeKey: string;
+}) {
+  const [range, setRange] = useState<(typeof RANGES)[number]["key"]>("live");
+  const [samples, setSamples] = useState<SamplePoint[] | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const days = RANGES.find((r) => r.key === range)?.days ?? 0;
+
+  useEffect(() => {
+    if (days === 0) {
+      setSamples(null);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    void (async () => {
+      try {
+        const r = await fetch(`/api/runs/samples?days=${days}`);
+        const body = (await r.json()) as { samples?: SamplePoint[] };
+        if (!cancelled) setSamples(body.samples ?? []);
+      } catch {
+        if (!cancelled) setSamples([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    // Stored samples land once a minute; polling faster re-reads the same rows.
+    const t = setInterval(() => {
+      void fetch(`/api/runs/samples?days=${days}`)
+        .then((r) => r.json())
+        .then((b: { samples?: SamplePoint[] }) => !cancelled && setSamples(b.samples ?? []))
+        .catch(() => {});
+    }, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, [days]);
+
+  /*
+   * Stored samples are per endpoint; the chart is per cluster, so rows sharing
+   * a timestamp are summed. A null input reading is left out of the sum rather
+   * than counted as zero — rows written before those columns existed have no
+   * input figure, and treating them as zero would draw a floor across history
+   * that never happened.
+   */
+  const stored = useMemo(() => {
+    if (!samples || samples.length === 0) return null;
+    const byTs = new Map<number, { out: number; inAll: number | null; inComputed: number | null }>();
+    for (const s of samples) {
+      const cur = byTs.get(s.ts) ?? { out: 0, inAll: null, inComputed: null };
+      cur.out += s.tokensPerSec;
+      if (s.promptTokensPerSec !== null) cur.inAll = (cur.inAll ?? 0) + s.promptTokensPerSec;
+      if (s.promptComputedTokensPerSec !== null) {
+        cur.inComputed = (cur.inComputed ?? 0) + s.promptComputedTokensPerSec;
+      }
+      byTs.set(s.ts, cur);
+    }
+    const ts = [...byTs.keys()].sort((a, b) => a - b);
+    const rows = ts.map((t) => byTs.get(t)!);
+    const series: ChartSeries[] = [
+      { label: "Output", colorVar: "--series-1", values: rows.map((r) => r.out) },
+      { label: "Input (computed)", colorVar: "--series-3", values: rows.map((r) => r.inComputed ?? NaN) },
+      { label: "Input (ingested)", colorVar: "--series-4", values: rows.map((r) => r.inAll ?? NaN) },
+    ];
+    return { ts, series };
+  }, [samples]);
+
+  const shown = days === 0 ? live : stored;
+  const hasData = shown !== null && shown.ts.length > 1;
+
+  return (
+    <Card
+      className="lg:col-span-2"
+      title="Input and output tokens"
+      right={
+        <div className="flex items-center gap-3">
+          <div className="hidden flex-wrap gap-2.5 sm:flex">
+            {(shown?.series ?? live.series).map((s) => (
+              <LegendItem key={s.label} colorVar={s.colorVar} label={s.label} />
+            ))}
+          </div>
+          <div className="flex gap-1">
+            {RANGES.map((r) => (
+              <button
+                key={r.key}
+                type="button"
+                onClick={() => setRange(r.key)}
+                aria-pressed={range === r.key}
+                className={`cursor-pointer rounded-md px-2 py-0.5 text-[11px] transition-colors ${
+                  range === r.key
+                    ? "bg-accent font-semibold text-[color:var(--on-accent,#08120a)]"
+                    : "text-ink-muted hover:text-ink"
+                }`}
+              >
+                {r.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      }
+    >
+      {hasData ? (
+        <>
+          <TimeChart
+            ts={shown!.ts}
+            series={shown!.series}
+            height={168}
+            format={(v) => `${v.toFixed(1)} tok/s`}
+            tickFormat={(v) => compactTokens(v)}
+            minRange={10}
+            themeKey={`${themeKey}:${range}`}
+          />
+          <p className="mt-2 text-[11px] leading-relaxed text-ink-muted">
+            Output is what a request waits for. Input is plotted as the prompt tokens that reached a model;
+            the ingested line above it is everything the engine was handed, and the gap between them is the
+            prefix cache. A long conversation spends most of its input on the cheap line.
+            {days > 0 && " Stored samples are written once a minute, so this is coarser than Live."}
+          </p>
+        </>
+      ) : (
+        <div className="flex h-[168px] items-center justify-center text-[11px] text-ink-muted">
+          {loading
+            ? "Loading…"
+            : days === 0
+              ? "Collecting…"
+              : "No stored samples for this window yet."}
+        </div>
+      )}
+    </Card>
   );
 }
 

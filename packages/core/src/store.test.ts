@@ -7,6 +7,10 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { HistoryDb } from "./store.ts";
 import type { ClusterSnapshot, InferenceEndpoint, NodeSnapshot } from "./types.ts";
 
@@ -248,6 +252,49 @@ describe("summary", () => {
     expect(sum.tokensGenerated).toBe(2000);
     expect(sum.requestsServed).toBe(40);
     expect(sum.models).toEqual(["deepseek-v4"]);
+    s.close();
+  });
+});
+
+describe("schema migration", () => {
+  test("adds new sample columns to a database created before they existed", () => {
+    /*
+     * The failure this guards against: `CREATE TABLE IF NOT EXISTS` is a no-op
+     * on an existing table, so without an explicit ALTER every install that
+     * upgrades keeps the old shape and the new columns are simply absent.
+     *
+     * Exercised through a real file and the real constructor rather than a
+     * test-only hook, because the constructor is what does the upgrading.
+     */
+    const path = join(tmpdir(), `sparktop-migrate-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
+    const legacy = new Database(path, { create: true });
+    legacy.exec(`
+      CREATE TABLE samples (
+        ts INTEGER NOT NULL, endpoint_id TEXT NOT NULL, node_id TEXT NOT NULL,
+        tokens_per_sec REAL NOT NULL, requests_running INTEGER NOT NULL, kv_cache_pct REAL
+      );
+      INSERT INTO samples VALUES (1, 'n1:8888', 'n1', 40, 1, 12);
+    `);
+    const before = legacy.query<{ name: string }, []>(`PRAGMA table_info(samples)`).all().map((c) => c.name);
+    expect(before).not.toContain("prompt_tokens_per_sec");
+    legacy.close();
+
+    const store = new HistoryDb(path, { sampleIntervalMs: 0 });
+    const [old] = store.samples(0);
+    // The pre-existing row survives, with the new fields absent rather than zero.
+    expect(old!.tokensPerSec).toBe(40);
+    expect(old!.promptTokensPerSec).toBeNull();
+    expect(old!.promptComputedTokensPerSec).toBeNull();
+    store.close();
+    rmSync(path, { force: true });
+  });
+
+  test("records input rates alongside output", () => {
+    const s = db();
+    s.record(snap(T0, [endpoint({ prefillTokensPerSec: 5000, prefillComputedTokensPerSec: 130 })]));
+    const [point] = s.samples(0);
+    expect(point!.promptTokensPerSec).toBe(5000);
+    expect(point!.promptComputedTokensPerSec).toBe(130);
     s.close();
   });
 });
