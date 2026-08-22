@@ -325,11 +325,23 @@ for p in \$(ss -tlnH 2>/dev/null | awk '{print \$4}' | grep -vE '^10\.100\.' | s
     # are unlabelled — so without this an endpoint that is serving perfectly
     # well appears nameless. /v1/models answers for anything OpenAI-compatible;
     # /props is llama.cpp's own and returns a filesystem path.
-    m=\$(curl -s -m 1 "http://127.0.0.1:\$p/v1/models" 2>/dev/null | head -c 600 \\
-         | tr ',' '\\n' | grep -m1 '"id"' | sed 's/.*"id"[[:space:]]*:[[:space:]]*"//; s/".*//')
+    # The body is checked before anything is taken from it. A server with an
+    # API key answers /v1/models with an error document, and an error that
+    # happened to carry an "id" would otherwise be reported as the model name.
+    mb=\$(curl -s -m 1 "http://127.0.0.1:\$p/v1/models" 2>/dev/null | head -c 600)
+    m=""
+    case "\$mb" in
+      *'"object"'*|*'"data"'*)
+        m=\$(printf '%s' "\$mb" | tr ',' '\\n' | grep -m1 '"id"' \\
+             | sed 's/.*"id"[[:space:]]*:[[:space:]]*"//; s/".*//') ;;
+    esac
     if [ -z "\$m" ]; then
-      m=\$(curl -s -m 1 "http://127.0.0.1:\$p/props" 2>/dev/null | head -c 900 \\
-           | tr ',' '\\n' | grep -m1 'model_path' | sed 's/.*"model_path"[[:space:]]*:[[:space:]]*"//; s/".*//')
+      pb=\$(curl -s -m 1 "http://127.0.0.1:\$p/props" 2>/dev/null | head -c 900)
+      case "\$pb" in
+        *model_path*)
+          m=\$(printf '%s' "\$pb" | tr ',' '\\n' | grep -m1 'model_path' \\
+               | sed 's/.*"model_path"[[:space:]]*:[[:space:]]*"//; s/".*//') ;;
+      esac
     fi
     printf 'PORT${US}%s${US}metrics${US}%s\\n' "\$p" "\$m"
     continue
