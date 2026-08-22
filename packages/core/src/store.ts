@@ -59,6 +59,13 @@ export interface SamplePoint {
    */
   promptTokensPerSec: number | null;
   promptComputedTokensPerSec: number | null;
+  /**
+   * The engine's cumulative counters at this instant. A window's token count is
+   * the difference between its ends; a decrease means the engine restarted.
+   */
+  genTokensTotal: number | null;
+  promptTokensTotal: number | null;
+  cachedPromptTokensTotal: number | null;
   requestsRunning: number;
   kvCachePct: number | null;
 }
@@ -136,6 +143,19 @@ export class HistoryDb {
      */
     this.addColumn("samples", "prompt_tokens_per_sec", "REAL");
     this.addColumn("samples", "prompt_computed_tokens_per_sec", "REAL");
+    /*
+     * The engines' own cumulative counters, kept alongside the rates.
+     *
+     * A rate answers "how fast right now"; only a counter answers "how much
+     * over this window", and integrating a once-a-minute rate to get there
+     * would compound its sampling error across a month. Storing the counter
+     * lets a window be read as the difference between its ends, and makes an
+     * engine restart visible as the counter going backwards rather than as a
+     * spike of negative work.
+     */
+    this.addColumn("samples", "gen_tokens_total", "REAL");
+    this.addColumn("samples", "prompt_tokens_total", "REAL");
+    this.addColumn("samples", "cached_prompt_tokens_total", "REAL");
   }
 
   /** Add a column when it is not already present. */
@@ -258,8 +278,9 @@ export class HistoryDb {
   private writeSamples(ts: number, endpoints: InferenceEndpoint[]): void {
     const insert = this.db.query(
       `INSERT INTO samples (ts, endpoint_id, node_id, tokens_per_sec, requests_running, kv_cache_pct,
-                            prompt_tokens_per_sec, prompt_computed_tokens_per_sec)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+                            prompt_tokens_per_sec, prompt_computed_tokens_per_sec,
+                            gen_tokens_total, prompt_tokens_total, cached_prompt_tokens_total)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     // One transaction: a dozen endpoints should be one fsync, not a dozen.
     this.db.transaction(() => {
@@ -273,7 +294,10 @@ export class HistoryDb {
           e.requestsRunning ?? 0,
           e.kvCachePct,
           e.prefillTokensPerSec,
-          e.prefillComputedTokensPerSec
+          e.prefillComputedTokensPerSec,
+          e.generationTokensTotal,
+          e.promptTokensTotal,
+          e.cachedPromptTokensTotal
         );
       }
     })();
@@ -344,9 +368,13 @@ export class HistoryDb {
       kv_cache_pct: number | null;
       prompt_tokens_per_sec: number | null;
       prompt_computed_tokens_per_sec: number | null;
+      gen_tokens_total: number | null;
+      prompt_tokens_total: number | null;
+      cached_prompt_tokens_total: number | null;
     };
     const cols = `ts, endpoint_id, tokens_per_sec, requests_running, kv_cache_pct,
-                  prompt_tokens_per_sec, prompt_computed_tokens_per_sec`;
+                  prompt_tokens_per_sec, prompt_computed_tokens_per_sec,
+                  gen_tokens_total, prompt_tokens_total, cached_prompt_tokens_total`;
     const rows = endpointId
       ? this.db
           .query<Row, [number, string]>(
@@ -362,6 +390,9 @@ export class HistoryDb {
       endpointId: r.endpoint_id,
       promptTokensPerSec: r.prompt_tokens_per_sec,
       promptComputedTokensPerSec: r.prompt_computed_tokens_per_sec,
+      genTokensTotal: r.gen_tokens_total,
+      promptTokensTotal: r.prompt_tokens_total,
+      cachedPromptTokensTotal: r.cached_prompt_tokens_total,
       tokensPerSec: r.tokens_per_sec,
       requestsRunning: r.requests_running,
       kvCachePct: r.kv_cache_pct,

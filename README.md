@@ -415,13 +415,17 @@ it so the engine's own figure is still there to compare.
 60 tok/s across four concurrent requests gives each of them about 15, which is
 what a user actually experiences. Both are shown.
 
-Input and output are charted separately as well as per endpoint. They answer
-different questions and live on different scales: output is what a request waits
-for, input is what had to be read first, and on a long agentic conversation the
-second runs orders of magnitude larger — a fleet showing 109K generated against
-18M ingested is normal, not a fault. The input line is plotted as the tokens
-that reached a model, with the ingested rate above it; the gap between the two
-is the prefix cache.
+Input and output are charted separately as well as per endpoint, as **token
+counts rather than rates** — the slope is the throughput, the height is the work
+done. They live on very different scales: on a long agentic conversation the
+input runs orders of magnitude larger, and a fleet showing 172K generated
+against 26M ingested is ordinary rather than a fault.
+
+A third line tracks **cache hits**: the part of the input a prefix cache served
+instead of a model. The gap between it and the input line is what was actually
+computed, which on this pair is currently 71.5% served from cache. An engine
+restart shows as a plateau rather than a drop, because its counter resetting is
+not negative work.
 
 The chart switches between **Live**, **24h**, **7d** and **30d**. Live is the
 in-memory ring at full resolution — whether something is happening right now.

@@ -48,23 +48,23 @@ export function InferenceView({ nodes, history, themeKey }: Props) {
   const ts = history?.ts ?? [];
 
   /*
-   * Input against output, as one chart of cluster totals.
+   * Input against output, as token counts rather than rates.
    *
-   * Splitting by endpoint would answer "which server" — already covered by the
-   * chart above. This answers the different question of what the fleet is
-   * reading versus what it is producing, which is the shape of the workload
-   * rather than its distribution.
+   * A rate answers "how fast right now", which the chart above already does per
+   * endpoint. What a token chart is usually asked is "how much" — and counts
+   * make the shape of the workload legible in a way rates cannot, because
+   * output and input differ by orders of magnitude and a rate plot spends most
+   * of its height on whichever spikes.
    *
-   * Prompt tokens are plotted as the part that reached a model, not everything
-   * the engine was handed: a cached prefix arrives as a spike of tens of
-   * thousands and would flatten the output series into the axis. The ingested
-   * rate is kept as a third, dimmer series so the cache's contribution is still
-   * visible as the gap between them.
+   * The engines expose cumulative counters, so the chart carries those and
+   * converts them to a running total within the window. Cache hits are plotted
+   * beside input, since the interesting thing about a long conversation is how
+   * much of its prompt never reached a model at all.
    */
   const ioSeries: ChartSeries[] = [
-    { label: "Output", colorVar: "--series-1", values: history?.series["cluster:tokensOut"] ?? [] },
-    { label: "Input (computed)", colorVar: "--series-3", values: history?.series["cluster:tokensComputed"] ?? [] },
-    { label: "Input (ingested)", colorVar: "--series-4", values: history?.series["cluster:tokensIn"] ?? [] },
+    { label: "Output", colorVar: "--series-1", values: history?.series["cluster:genTotal"] ?? [] },
+    { label: "Input", colorVar: "--series-3", values: history?.series["cluster:promptTotal"] ?? [] },
+    { label: "Cache hits", colorVar: "--series-4", values: history?.series["cluster:cachedTotal"] ?? [] },
   ].filter((s) => s.values.length > 0);
 
   const totalIn = endpoints.reduce((a, e) => a + (e.prefillTokensPerSec ?? 0), 0);
@@ -151,17 +151,49 @@ export function InferenceView({ nodes, history, themeKey }: Props) {
         )}
       </Card>
 
-      <TokenHistoryCard live={{ ts, series: ioSeries }} themeKey={themeKey} />
+      <TokenHistoryCard
+        live={{ ts, series: ioSeries.map((x) => ({ ...x, values: accumulate(x.values) })) }}
+        themeKey={themeKey}
+      />
     </div>
   );
 }
 
+
+/**
+ * Turn a cumulative counter into tokens accumulated within the window.
+ *
+ * A counter starts wherever the engine happens to be — tens of millions in —
+ * so plotting it raw puts the whole window in a flat band near the top and
+ * shows nothing. Accumulating its forward deltas from zero makes the window's
+ * own work the subject.
+ *
+ * A decrease means the engine restarted and its counter went back to zero. That
+ * contributes no negative work: the step is skipped and accumulation continues,
+ * so a restart shows as a plateau rather than as a cliff into negative numbers.
+ */
+function accumulate(values: (number | null)[]): (number | null)[] {
+  let acc = 0;
+  let prev: number | null = null;
+  return values.map((v) => {
+    if (v === null || Number.isNaN(v)) return null;
+    if (prev !== null && v >= prev) acc += v - prev;
+    prev = v;
+    return acc;
+  });
+}
+
+/** One stored sample, mirroring the shape `/api/runs/samples` returns. */
 interface SamplePoint {
   ts: number;
   endpointId: string;
   tokensPerSec: number;
   promptTokensPerSec: number | null;
   promptComputedTokensPerSec: number | null;
+  /** Cumulative counters. Null on rows written before they were recorded. */
+  genTokensTotal: number | null;
+  promptTokensTotal: number | null;
+  cachedPromptTokensTotal: number | null;
 }
 
 /** Live window plus the durable ones, which is the whole range this can show. */
@@ -233,23 +265,64 @@ function TokenHistoryCard({
    */
   const stored = useMemo(() => {
     if (!samples || samples.length === 0) return null;
-    const byTs = new Map<number, { out: number; inAll: number | null; inComputed: number | null }>();
+    /*
+     * Rows are per endpoint; the chart is per cluster. Each endpoint's counter
+     * is accumulated on its own before the totals are added, because summing
+     * raw counters across endpoints would turn one engine restarting into a
+     * cluster-wide cliff.
+     */
+    const byEndpoint = new Map<string, SamplePoint[]>();
     for (const s of samples) {
-      const cur = byTs.get(s.ts) ?? { out: 0, inAll: null, inComputed: null };
-      cur.out += s.tokensPerSec;
-      if (s.promptTokensPerSec !== null) cur.inAll = (cur.inAll ?? 0) + s.promptTokensPerSec;
-      if (s.promptComputedTokensPerSec !== null) {
-        cur.inComputed = (cur.inComputed ?? 0) + s.promptComputedTokensPerSec;
-      }
-      byTs.set(s.ts, cur);
+      const list = byEndpoint.get(s.endpointId) ?? [];
+      list.push(s);
+      byEndpoint.set(s.endpointId, list);
     }
-    const ts = [...byTs.keys()].sort((a, b) => a - b);
-    const rows = ts.map((t) => byTs.get(t)!);
+    const ts = [...new Set(samples.map((s) => s.ts))].sort((a, b) => a - b);
+    const index = new Map(ts.map((t, i) => [t, i]));
+
+    const totals = {
+      out: new Array<number>(ts.length).fill(0),
+      in: new Array<number>(ts.length).fill(0),
+      cached: new Array<number>(ts.length).fill(0),
+    };
+    const seen = { out: false, in: false, cached: false };
+
+    for (const rows of byEndpoint.values()) {
+      rows.sort((a, b) => a.ts - b.ts);
+      const run = { out: 0, in: 0, cached: 0 };
+      const prev: { out: number | null; in: number | null; cached: number | null } = {
+        out: null, in: null, cached: null,
+      };
+      const step = (key: "out" | "in" | "cached", v: number | null) => {
+        if (v === null) return;
+        seen[key] = true;
+        const p = prev[key];
+        if (p !== null && v >= p) run[key] += v - p;
+        prev[key] = v;
+      };
+      // Carry each endpoint's running total forward across every timestamp, so
+      // an endpoint that reported less often does not drag the sum down.
+      let cursor = 0;
+      for (let i = 0; i < ts.length; i++) {
+        while (cursor < rows.length && rows[cursor]!.ts <= ts[i]!) {
+          const r = rows[cursor]!;
+          step("out", r.genTokensTotal);
+          step("in", r.promptTokensTotal);
+          step("cached", r.cachedPromptTokensTotal);
+          cursor++;
+        }
+        totals.out[i]! += run.out;
+        totals.in[i]! += run.in;
+        totals.cached[i]! += run.cached;
+      }
+    }
+
     const series: ChartSeries[] = [
-      { label: "Output", colorVar: "--series-1", values: rows.map((r) => r.out) },
-      { label: "Input (computed)", colorVar: "--series-3", values: rows.map((r) => r.inComputed ?? NaN) },
-      { label: "Input (ingested)", colorVar: "--series-4", values: rows.map((r) => r.inAll ?? NaN) },
-    ];
+      { label: "Output", colorVar: "--series-1", values: seen.out ? totals.out : [] },
+      { label: "Input", colorVar: "--series-3", values: seen.in ? totals.in : [] },
+      { label: "Cache hits", colorVar: "--series-4", values: seen.cached ? totals.cached : [] },
+    ].filter((x) => x.values.length > 0);
+    if (!series.length) return null;
     return { ts, series };
   }, [samples]);
 
@@ -293,15 +366,17 @@ function TokenHistoryCard({
             ts={shown!.ts}
             series={shown!.series}
             height={168}
-            format={(v) => `${v.toFixed(1)} tok/s`}
+            format={(v) => `${compactTokens(v)} tokens`}
             tickFormat={(v) => compactTokens(v)}
-            minRange={10}
+            minRange={100}
             themeKey={`${themeKey}:${range}`}
           />
           <p className="mt-2 text-[11px] leading-relaxed text-ink-muted">
-            Output is what a request waits for. Input is plotted as the prompt tokens that reached a model;
-            the ingested line above it is everything the engine was handed, and the gap between them is the
-            prefix cache. A long conversation spends most of its input on the cheap line.
+            Tokens accumulated over this window, not a rate — the slope is the throughput, the height is
+            the work done. <b>Cache hits</b> are the part of the input that a prefix cache served instead
+            of a model, so the gap between it and <b>Input</b> is what was actually computed. A restart
+            shows as a plateau rather than a drop: the engine's counter resets, and a reset is not
+            negative work.
             {days > 0 && " Stored samples are written once a minute, so this is coarser than Live."}
           </p>
         </>

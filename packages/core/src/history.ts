@@ -122,6 +122,11 @@ export function historySample(snap: ClusterSnapshot): Record<string, number> {
       out[`infer:${e.id}:prefill`] = e.prefillTokensPerSec ?? NaN;
       out[`infer:${e.id}:computed`] = e.prefillComputedTokensPerSec ?? NaN;
       out[`infer:${e.id}:queued`] = e.requestsWaiting ?? NaN;
+      // Cumulative counters, so a window can be read as a token count rather
+      // than integrated from a rate.
+      out[`infer:${e.id}:genTotal`] = e.generationTokensTotal ?? NaN;
+      out[`infer:${e.id}:promptTotal`] = e.promptTokensTotal ?? NaN;
+      out[`infer:${e.id}:cachedTotal`] = e.cachedPromptTokensTotal ?? NaN;
       out[`infer:${e.id}:ttft`] = e.latencyBasis === "window" && e.ttftMs !== null ? e.ttftMs : NaN;
     }
   }
@@ -133,6 +138,9 @@ export function historySample(snap: ClusterSnapshot): Record<string, number> {
   out["cluster:tokensOut"] = snap.totals.tokensPerSec;
   out["cluster:tokensIn"] = snap.totals.promptTokensPerSec;
   out["cluster:tokensComputed"] = snap.totals.promptComputedTokensPerSec;
+  out["cluster:genTotal"] = snap.totals.generationTokensTotal;
+  out["cluster:promptTotal"] = snap.totals.promptTokensTotal;
+  out["cluster:cachedTotal"] = snap.totals.cachedPromptTokensTotal;
 
   return out;
 }

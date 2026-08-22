@@ -601,6 +601,15 @@ export interface ClusterSnapshot {
      * work done.
      */
     promptComputedTokensPerSec: number;
+    /**
+     * Cumulative counters summed across engines. Rates say what is happening;
+     * these say how much has been done, and a window's count is the difference
+     * between its ends.
+     */
+    generationTokensTotal: number;
+    promptTokensTotal: number;
+    /** Prompt tokens served from a prefix cache rather than recomputed. */
+    cachedPromptTokensTotal: number;
     /** Requests currently generating, across all endpoints. */
     requestsRunning: number;
     requestsWaiting: number;

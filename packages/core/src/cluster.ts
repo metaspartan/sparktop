@@ -575,6 +575,7 @@ function rollUp(nodes: NodeSnapshot[]): ClusterSnapshot["totals"] {
   let maxTempC: number | null = null;
   let inferenceEndpoints = 0, tokensPerSec = 0, requestsRunning = 0, requestsWaiting = 0;
   let promptTokensPerSec = 0, promptComputedTokensPerSec = 0;
+  let generationTokensTotal = 0, promptTokensTotal = 0, cachedPromptTokensTotal = 0;
   /*
    * Guard against counting one server twice.
    *
@@ -600,6 +601,9 @@ function rollUp(nodes: NodeSnapshot[]): ClusterSnapshot["totals"] {
       // Falls back to the ingested rate when the engine reports no cache figures,
       // so the two series stay comparable rather than one silently reading zero.
       promptComputedTokensPerSec += e.prefillComputedTokensPerSec ?? e.prefillTokensPerSec ?? 0;
+      generationTokensTotal += e.generationTokensTotal ?? 0;
+      promptTokensTotal += e.promptTokensTotal ?? 0;
+      cachedPromptTokensTotal += e.cachedPromptTokensTotal ?? 0;
       requestsRunning += e.requestsRunning ?? 0;
       requestsWaiting += e.requestsWaiting ?? 0;
     }
@@ -633,6 +637,9 @@ function rollUp(nodes: NodeSnapshot[]): ClusterSnapshot["totals"] {
     tokensPerSec: Math.round(tokensPerSec * 10) / 10,
     promptTokensPerSec: Math.round(promptTokensPerSec * 10) / 10,
     promptComputedTokensPerSec: Math.round(promptComputedTokensPerSec * 10) / 10,
+    generationTokensTotal,
+    promptTokensTotal,
+    cachedPromptTokensTotal,
     requestsRunning,
     requestsWaiting,
   };
