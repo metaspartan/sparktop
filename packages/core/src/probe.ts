@@ -247,7 +247,7 @@ export const FAST_PROBE = FAST_PROBE_BASE;
  * second), so it is deliberately kept out of the fast path and bounded with a
  * timeout.
  */
-export const SLOW_PROBE = `#!/bin/sh
+const SLOW_PROBE_HEAD = `#!/bin/sh
 set -u
 S() { printf '${RS}%s\\n' "$1"; }
 
@@ -304,11 +304,27 @@ S listeners
 # is an inference server.
 ss -tlnH 2>/dev/null | awk '{print $4}' | grep -vE '^10\.100\.' | sed 's/.*://' \
   | grep -E '^[0-9]+$' | sort -un | head -60
+`;
 
+/**
+ * Endpoint identification, requested only when it can tell us something new.
+ *
+ * Every port here costs an HTTP round trip, and one that accepts TCP without
+ * answering HTTP costs the whole curl timeout instead. Ports do not come and
+ * go, so re-running this every ten seconds spent seconds of a Spark's time to
+ * re-learn what it already knew.
+ */
+const SLOW_PROBE_DISCOVERY = `
 S probe_endpoints
 # Identify what is actually answering on each candidate port. Probed from the
 # node itself because inference servers commonly bind 127.0.0.1, where the
 # sparktop host cannot reach them.
+#
+# This is the expensive part of the slow tier and it is why the section is
+# optional: a port that accepts TCP without speaking HTTP costs the full curl
+# timeout, three times over, and several such ports turned a 10-second poll
+# into five seconds of work. The collector asks for it only when the set of
+# listening ports has changed or a few minutes have passed.
 for p in \$(ss -tlnH 2>/dev/null | awk '{print \$4}' | grep -vE '^10\.100\.' | sed 's/.*://' | grep -E '^[0-9]+\$' | sort -un | head -60); do
   case " 22 25 53 123 631 5757 5432 3306 6379 9090 111 2049 " in
     *" \$p "*) continue ;;
@@ -316,7 +332,7 @@ for p in \$(ss -tlnH 2>/dev/null | awk '{print \$4}' | grep -vE '^10\.100\.' | s
   # Match the engine signature across the whole body, not a prefix of it. A
   # vLLM /metrics opens with several hundred bytes of Python GC boilerplate, so
   # truncating the response before matching finds nothing at all.
-  sig=\$(curl -s -m 2 "http://127.0.0.1:\$p/metrics" 2>/dev/null \\
+  sig=\$(curl -s --connect-timeout 1 -m 1 "http://127.0.0.1:\$p/metrics" 2>/dev/null \\
         | grep -m1 -oE '^(vllm:|sglang:|llamacpp:|tgi_|nv_inference)')
   if [ -n "\$sig" ]; then
     # Ask what model is loaded.
@@ -328,7 +344,7 @@ for p in \$(ss -tlnH 2>/dev/null | awk '{print \$4}' | grep -vE '^10\.100\.' | s
     # The body is checked before anything is taken from it. A server with an
     # API key answers /v1/models with an error document, and an error that
     # happened to carry an "id" would otherwise be reported as the model name.
-    mb=\$(curl -s -m 1 "http://127.0.0.1:\$p/v1/models" 2>/dev/null | head -c 600)
+    mb=\$(curl -s --connect-timeout 1 -m 1 "http://127.0.0.1:\$p/v1/models" 2>/dev/null | head -c 600)
     m=""
     case "\$mb" in
       *'"object"'*|*'"data"'*)
@@ -336,7 +352,7 @@ for p in \$(ss -tlnH 2>/dev/null | awk '{print \$4}' | grep -vE '^10\.100\.' | s
              | sed 's/.*"id"[[:space:]]*:[[:space:]]*"//; s/".*//') ;;
     esac
     if [ -z "\$m" ]; then
-      pb=\$(curl -s -m 1 "http://127.0.0.1:\$p/props" 2>/dev/null | head -c 900)
+      pb=\$(curl -s --connect-timeout 1 -m 1 "http://127.0.0.1:\$p/props" 2>/dev/null | head -c 900)
       case "\$pb" in
         *model_path*)
           m=\$(printf '%s' "\$pb" | tr ',' '\\n' | grep -m1 'model_path' \\
@@ -346,36 +362,84 @@ for p in \$(ss -tlnH 2>/dev/null | awk '{print \$4}' | grep -vE '^10\.100\.' | s
     printf 'PORT${US}%s${US}metrics${US}%s\\n' "\$p" "\$m"
     continue
   fi
-  ol=\$(curl -s -m 1 "http://127.0.0.1:\$p/api/ps" 2>/dev/null | head -c 200)
+  ol=\$(curl -s --connect-timeout 1 -m 1 "http://127.0.0.1:\$p/api/ps" 2>/dev/null | head -c 200)
   case "\$ol" in
     *models*) printf 'PORT${US}%s${US}ollama\\n' "\$p"; continue ;;
   esac
-  oa=\$(curl -s -m 1 "http://127.0.0.1:\$p/v1/models" 2>/dev/null | head -c 200)
+  oa=\$(curl -s --connect-timeout 1 -m 1 "http://127.0.0.1:\$p/v1/models" 2>/dev/null | head -c 200)
   case "\$oa" in
     *object*|*data*) printf 'PORT${US}%s${US}openai\\n' "\$p" ;;
   esac
 done
+`;
 
+const SLOW_PROBE_TAIL = `
 S docker
-if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+# One availability check, one container list, for all three docker sections.
+#
+# \`docker info\` is a round trip to the daemon and it was being paid three times
+# per poll, once per section, alongside a second \`docker ps\`. On a node that is
+# serving, every one of those queues behind the same daemon as the workload.
+DOK=NO
+if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then DOK=OK; fi
+RUNNING=""
+if [ "\$DOK" = OK ]; then
   echo OK
   docker ps -a --no-trunc --format '{{.ID}}${US}{{.Names}}${US}{{.Image}}${US}{{.State}}${US}{{.Status}}${US}{{.CreatedAt}}' 2>/dev/null
+  RUNNING=\$(docker ps -q --no-trunc 2>/dev/null)
 else
   echo NO
 fi
 
-S dockerstats
-if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-  timeout 10 docker stats --no-stream --format '{{.ID}}${US}{{.CPUPerc}}${US}{{.MemUsage}}' 2>/dev/null || true
-fi
-
 S dockerenv
-if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-  for c in \$(docker ps -q --no-trunc 2>/dev/null); do
-    envs=\$(docker inspect "\$c" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | \\
+if [ "\$DOK" = OK ]; then
+  for c in \$RUNNING; do
+    # One inspect per container, not two. NetworkMode comes back on the first
+    # line and the environment after it, which is cheaper than asking the
+    # daemon for the same document twice.
+    doc=\$(docker inspect "\$c" --format '{{.HostConfig.NetworkMode}}
+{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null)
+    nm=\$(printf '%s\\n' "\$doc" | head -1)
+    envs=\$(printf '%s\\n' "\$doc" | tail -n +2 | \\
       grep -E '^(MASTER_ADDR|MASTER_PORT|NCCL_SOCKET_IFNAME|NCCL_IB_HCA|NCCL_IB_DISABLE|NCCL_IB_MERGE_NICS|UCX_NET_DEVICES|WORLD_SIZE|RANK|NODE_RANK|VLLM_HOST_IP|DSPARK_MODEL|MODEL|MODEL_NAME)=' | tr '\\n' '${US}')
-    printf '%s${US}NETWORKMODE=%s${US}%s\\n' "\$c" \\
-      "\$(docker inspect "\$c" --format '{{.HostConfig.NetworkMode}}' 2>/dev/null)" "\$envs"
+    printf '%s${US}NETWORKMODE=%s${US}%s\\n' "\$c" "\$nm" "\$envs"
   done
 fi
 `;
+
+/**
+ * Container CPU and memory, requested periodically.
+ *
+ * \`docker stats --no-stream\` samples every container over a short interval and
+ * costs about a second on a Spark — by far the most expensive thing in the slow
+ * tier, and it competes with the workload for the same daemon. Container
+ * utilisation moves slowly enough that reading it every third poll loses
+ * nothing a person would notice.
+ */
+const SLOW_PROBE_STATS = `
+S dockerstats
+if [ "\$DOK" = OK ]; then
+  timeout 10 docker stats --no-stream --format '{{.ID}}${US}{{.CPUPerc}}${US}{{.MemUsage}}' 2>/dev/null || true
+fi
+`;
+
+/**
+ * Slow probe, with the two costly sections opt-in.
+ *
+ * The rest is cheap reads of inventory that changes rarely. Endpoint discovery
+ * and container stats are the parts that cost a node real time, so the
+ * collector asks for each only when it will learn something: discovery when the
+ * listening ports move, stats every few polls.
+ */
+export function buildSlowProbe(opts: { identify?: boolean; stats?: boolean } = {}): string {
+  return (
+    SLOW_PROBE_HEAD +
+    (opts.identify ? SLOW_PROBE_DISCOVERY : "") +
+    SLOW_PROBE_TAIL +
+    (opts.stats ? SLOW_PROBE_STATS : "")
+  );
+}
+
+/** Every section, for callers that do not track probe state. */
+export const SLOW_PROBE = buildSlowProbe({ identify: true, stats: true });
+

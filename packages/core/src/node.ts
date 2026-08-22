@@ -12,7 +12,7 @@
 import { EventEmitter } from "node:events";
 import { readFile } from "node:fs/promises";
 import { Client, type ConnectConfig } from "ssh2";
-import { SLOW_PROBE, buildFastProbe, type DiscoveredEndpoint } from "./probe.ts";
+import { buildSlowProbe, buildFastProbe, type DiscoveredEndpoint } from "./probe.ts";
 import { decryptSecret } from "./crypto.ts";
 import { detectVariant, isDgxSpark } from "./variants.ts";
 import {
@@ -188,6 +188,20 @@ export class NodeCollector extends EventEmitter {
   private endpoints: DiscoveredEndpoint[] = [];
   private fastScript = buildFastProbe([]);
   private endpointSig = "";
+  /*
+   * Endpoint discovery is the expensive part of the slow tier: an HTTP round
+   * trip per candidate port, and a port that accepts TCP without speaking HTTP
+   * costs the whole curl timeout. Ports do not come and go, so it runs when the
+   * listening set changes and otherwise only occasionally — the difference
+   * between spending five seconds of a node's time every ten, and spending it
+   * when there is something new to learn.
+   */
+  private listenerSig = "";
+  private lastIdentifyAt = 0;
+  private identifyNext = true;
+  /** Slow polls since container stats were last requested. */
+  private sinceStats = 99;
+  private lastDockerStats: string | undefined;
 
   // Slow-tier results, merged into every fast snapshot.
   private slow: SlowState = emptySlow();
@@ -394,9 +408,30 @@ export class NodeCollector extends EventEmitter {
     if (this.stopped || !this.client || this.slowInFlight) return;
     this.slowInFlight = true;
     try {
-      const s = splitSections(await this.exec(SLOW_PROBE, 30_000));
+      /*
+       * Ask for identification when the port set has moved or it has been a
+       * while. The five-minute floor covers the case where a server rebinds the
+       * same port as something else — the set looks unchanged, but what answers
+       * on it is not.
+       */
+      const identify = this.identifyNext || Date.now() - this.lastIdentifyAt >= 300_000;
+      /*
+       * Container CPU and memory every third slow poll. `docker stats` samples
+       * every container over an interval and is the most expensive thing in
+       * this tier; at 30 seconds it still tracks anything a person would act
+       * on, and the readings persist between requests.
+       */
+      const stats = ++this.sinceStats >= 3;
+      if (stats) this.sinceStats = 0;
+      const s = splitSections(await this.exec(buildSlowProbe({ identify, stats }), 30_000));
       const docker = parseDocker(s.docker);
-      applyDockerStats(docker.containers, s.dockerstats);
+      /*
+       * Carry the previous utilisation forward on polls that did not ask for
+       * it, so a container's CPU and memory stay populated rather than blinking
+       * out for two polls in three.
+       */
+      applyDockerStats(docker.containers, s.dockerstats ?? this.lastDockerStats);
+      if (s.dockerstats) this.lastDockerStats = s.dockerstats;
       applyDockerEnv(docker.containers, s.dockerenv);
       this.slow = {
         host: parseHost(s.host),
@@ -411,12 +446,26 @@ export class NodeCollector extends EventEmitter {
         loaded: true,
       };
 
-      const found = parseDiscoveredEndpoints(s.probe_endpoints);
-      const sig = found.map((e) => `${e.port}:${e.kind}`).join(",");
-      if (sig !== this.endpointSig) {
-        this.endpointSig = sig;
-        this.endpoints = found;
-        this.fastScript = buildFastProbe(found);
+      /*
+       * The listener list is cheap and always present, so a new port is noticed
+       * on the next slow poll even when identification was skipped.
+       */
+      const listeners = (s.listeners ?? "").trim();
+      if (listeners !== this.listenerSig) {
+        this.listenerSig = listeners;
+        this.identifyNext = true;
+      }
+
+      if (identify) {
+        this.lastIdentifyAt = Date.now();
+        this.identifyNext = false;
+        const found = parseDiscoveredEndpoints(s.probe_endpoints);
+        const sig = found.map((e) => `${e.port}:${e.kind}:${e.model ?? ""}`).join(",");
+        if (sig !== this.endpointSig) {
+          this.endpointSig = sig;
+          this.endpoints = found;
+          this.fastScript = buildFastProbe(found);
+        }
       }
     } catch {
       // A failed slow poll keeps the previous inventory; fast metrics continue.

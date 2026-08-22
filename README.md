@@ -303,6 +303,29 @@ The probe scripts are tuned for it. Reading sysfs with a loop of `cat` costs ~10
 
 Rates come from monotonic counters divided by measured wall time, not by the nominal interval, so a late poll does not distort throughput.
 
+### What it costs a node
+
+Measured on a GB10 while it was serving:
+
+| | wall | CPU |
+|---|---|---|
+| Fast poll (every 1s) | 0.13–0.18 s | 0.08 s |
+| Slow poll, steady state (every 10s) | **0.28 s** | 0.31 s |
+| Slow poll with container stats (every 3rd) | ~1.5 s | 0.33 s |
+| Slow poll with endpoint discovery (on port change, else every 5 min) | 5.3 s | 0.40 s |
+
+The two costly sections are opt-in per poll, because both were being paid every
+time for information that had not changed. Endpoint discovery is an HTTP round
+trip per listening port, and a port that accepts TCP without speaking HTTP costs
+the whole timeout — three of those turned a ten-second poll into five seconds of
+work. It now runs when the listening set moves, and otherwise every few minutes.
+`docker stats` samples every container over an interval and costs about a
+second; it runs every third poll, with the previous reading carried forward in
+between.
+
+If a node is doing something more important than being watched, `SPARKTOP_FAST_MS`
+and `SPARKTOP_SLOW_MS` raise the intervals.
+
 ### GB10 specifics
 
 - **Unified memory.** CPU and GPU share one LPDDR5X pool, and NVML reports framebuffer total/used as `[N/A]`. `sparktop` uses the system pool for the total and sums live NVML process allocations for the used figure, marking the value as derived rather than pretending NVML supplied it.
