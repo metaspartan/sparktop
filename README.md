@@ -365,6 +365,16 @@ what it answers with.
 | Ollama | `/api/ps` |
 | Anything OpenAI-compatible | `/v1/models` |
 
+Detection is by what a port answers with, not by configuration — there is no
+"this is a vLLM node" setting to get wrong. The model name comes from the
+Prometheus labels where an engine sets them (vLLM, SGLang) and from `/v1/models`
+or llama.cpp's `/props` where it does not, so a llama.cpp server is named rather
+than listed blank.
+
+Cached prompt tokens are counted for vLLM and SGLang, which expose them.
+llama.cpp and TGI have no such counter, so that series is absent for them rather
+than drawn as a flat zero.
+
 Probing runs on the node, because these servers usually bind `127.0.0.1` where
 the sparktop host cannot reach them. Discovery happens in the slow tier and the
 fast probe is then rebuilt to scrape only the ports found, with the response
@@ -415,17 +425,18 @@ it so the engine's own figure is still there to compare.
 60 tok/s across four concurrent requests gives each of them about 15, which is
 what a user actually experiences. Both are shown.
 
-Input and output are charted separately as well as per endpoint, as **token
-counts rather than rates** — the slope is the throughput, the height is the work
-done. They live on very different scales: on a long agentic conversation the
+Input and output are charted separately as well as per endpoint, as **tokens per
+interval rather than a rate or a running total** — idle reads as zero and a
+burst stands up, where a cumulative line would climb regardless of what was
+happening. They live on very different scales: on a long agentic conversation the
 input runs orders of magnitude larger, and a fleet showing 172K generated
 against 26M ingested is ordinary rather than a fault.
 
-A third line tracks **cache hits**: the part of the input a prefix cache served
-instead of a model. The gap between it and the input line is what was actually
-computed, which on this pair is currently 71.5% served from cache. An engine
-restart shows as a plateau rather than a drop, because its counter resetting is
-not negative work.
+A third line tracks **cached input**: the part of the prompt a prefix cache
+served instead of a model. The gap below the input line is what was actually
+computed — on this pair, 71.5% of 26M input tokens never reached a model. An
+engine restart contributes nothing rather than a spike downwards, since a
+counter resetting is not negative work.
 
 The chart switches between **Live**, **24h**, **7d** and **30d**. Live is the
 in-memory ring at full resolution — whether something is happening right now.

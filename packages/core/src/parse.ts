@@ -699,8 +699,8 @@ export function parseCpuInfo(body: string | undefined): { cores: number; model: 
 /** Discovery output: `PORT<US>8888<US>metrics` per identified server. */
 export function parseDiscoveredEndpoints(
   body: string | undefined
-): { port: number; kind: "metrics" | "ollama" | "openai" }[] {
-  const out: { port: number; kind: "metrics" | "ollama" | "openai" }[] = [];
+): { port: number; kind: "metrics" | "ollama" | "openai"; model?: string }[] {
+  const out: { port: number; kind: "metrics" | "ollama" | "openai"; model?: string }[] = [];
   const seen = new Set<number>();
   for (const line of lines(body)) {
     const f = line.split(US);
@@ -710,7 +710,14 @@ export function parseDiscoveredEndpoints(
     if (!port || seen.has(port)) continue;
     if (kind !== "metrics" && kind !== "ollama" && kind !== "openai") continue;
     seen.add(port);
-    out.push({ port, kind });
+    /*
+     * llama.cpp answers /props with a filesystem path, so the basename is the
+     * name a person would recognise. A model id from /v1/models is already in
+     * that form and has no slash to strip.
+     */
+    const raw = f[3]?.trim();
+    const model = raw ? raw.split("/").pop()?.replace(/\.gguf$/i, "") : undefined;
+    out.push(model ? { port, kind, model } : { port, kind });
   }
   return out.sort((a, b) => a.port - b.port);
 }

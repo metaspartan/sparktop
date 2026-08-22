@@ -206,3 +206,48 @@ describe("counter interval ratios", () => {
     expect(counterIntervalRatio(0, 0, 0, 200)! + 1).toBe(1);
   });
 });
+
+describe("token accounting across engines", () => {
+  /*
+   * The token chart is engine-neutral, so every supported engine has to yield
+   * input and output from its own metric names. Cached prompt tokens are a
+   * different matter: vLLM and SGLang count them, llama.cpp and TGI do not
+   * expose such a counter at all, and the right answer there is absence rather
+   * than a zero that would draw a "nothing cached" line.
+   */
+  const bodies: Record<string, string> = {
+    vllm: `vllm:num_requests_running 2
+vllm:prompt_tokens_total 1000
+vllm:generation_tokens_total 300
+vllm:prompt_tokens_cached_total 850`,
+    sglang: `sglang:num_running_reqs 2
+sglang:prompt_tokens_total 1000
+sglang:generation_tokens_total 300
+sglang:cached_tokens_total 700`,
+    llamacpp: `llamacpp:requests_processing 1
+llamacpp:prompt_tokens_total 1000
+llamacpp:tokens_predicted_total 300`,
+    tgi: `tgi_queue_size 0
+tgi_request_input_length_sum 1000
+tgi_request_generated_tokens_sum 300`,
+  };
+
+  test.each(Object.keys(bodies))("%s reports input and output tokens", (engine) => {
+    const r = readMetrics(bodies[engine]!)!;
+    expect(String(detectEngine(bodies[engine]!)!.id)).toBe(engine);
+    expect(r.promptTokensTotal).toBe(1000);
+    expect(r.generationTokensTotal).toBe(300);
+  });
+
+  test("counts cached prompt tokens where the engine exposes them", () => {
+    expect(readMetrics(bodies.vllm!)!.cachedPromptTokensTotal).toBe(850);
+    expect(readMetrics(bodies.sglang!)!.cachedPromptTokensTotal).toBe(700);
+  });
+
+  test("leaves cached tokens absent where the engine has no such counter", () => {
+    // Undefined, not 0 — the chart drops the series rather than claiming the
+    // cache served nothing.
+    expect(readMetrics(bodies.llamacpp!)!.cachedPromptTokensTotal).toBeUndefined();
+    expect(readMetrics(bodies.tgi!)!.cachedPromptTokensTotal).toBeUndefined();
+  });
+});

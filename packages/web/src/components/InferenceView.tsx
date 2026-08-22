@@ -64,7 +64,7 @@ export function InferenceView({ nodes, history, themeKey }: Props) {
   const ioSeries: ChartSeries[] = [
     { label: "Output", colorVar: "--series-1", values: history?.series["cluster:genTotal"] ?? [] },
     { label: "Input", colorVar: "--series-3", values: history?.series["cluster:promptTotal"] ?? [] },
-    { label: "Cache hits", colorVar: "--series-4", values: history?.series["cluster:cachedTotal"] ?? [] },
+    { label: "Cached input", colorVar: "--series-4", values: history?.series["cluster:cachedTotal"] ?? [] },
   ].filter((s) => s.values.length > 0);
 
   const totalIn = endpoints.reduce((a, e) => a + (e.prefillTokensPerSec ?? 0), 0);
@@ -152,7 +152,7 @@ export function InferenceView({ nodes, history, themeKey }: Props) {
       </Card>
 
       <TokenHistoryCard
-        live={{ ts, series: ioSeries.map((x) => ({ ...x, values: accumulate(x.values) })) }}
+        live={{ ts, series: ioSeries.map((x) => ({ ...x, values: bucketDeltas(x.values) })) }}
         themeKey={themeKey}
       />
     </div>
@@ -161,26 +161,33 @@ export function InferenceView({ nodes, history, themeKey }: Props) {
 
 
 /**
- * Turn a cumulative counter into tokens accumulated within the window.
+ * Turn a cumulative counter into tokens per bucket.
  *
- * A counter starts wherever the engine happens to be — tens of millions in —
- * so plotting it raw puts the whole window in a flat band near the top and
- * shows nothing. Accumulating its forward deltas from zero makes the window's
- * own work the subject.
+ * A running total only ever climbs, so the line says nothing about when the
+ * work happened — an hour of hard serving and an hour of idle look the same
+ * once the slope is small against the height. Differencing gives what was
+ * produced in each interval, which is what makes a workload's shape visible:
+ * bursts stand up, idle sits at zero.
  *
  * A decrease means the engine restarted and its counter went back to zero. That
- * contributes no negative work: the step is skipped and accumulation continues,
- * so a restart shows as a plateau rather than as a cliff into negative numbers.
+ * is not negative work, so the step yields nothing rather than a spike pointing
+ * down.
  */
-function accumulate(values: (number | null)[]): (number | null)[] {
-  let acc = 0;
+function bucketDeltas(values: (number | null)[]): (number | null)[] {
   let prev: number | null = null;
   return values.map((v) => {
     if (v === null || Number.isNaN(v)) return null;
-    if (prev !== null && v >= prev) acc += v - prev;
+    const d = prev === null || v < prev ? 0 : v - prev;
     prev = v;
-    return acc;
+    return d;
   });
+}
+
+/** Total across a window, ignoring gaps. */
+function sumSeries(values: (number | null)[]): number {
+  let total = 0;
+  for (const v of values) if (v !== null && !Number.isNaN(v)) total += v;
+  return total;
 }
 
 /** One stored sample, mirroring the shape `/api/runs/samples` returns. */
@@ -266,10 +273,10 @@ function TokenHistoryCard({
   const stored = useMemo(() => {
     if (!samples || samples.length === 0) return null;
     /*
-     * Rows are per endpoint; the chart is per cluster. Each endpoint's counter
-     * is accumulated on its own before the totals are added, because summing
-     * raw counters across endpoints would turn one engine restarting into a
-     * cluster-wide cliff.
+     * Rows are per endpoint; the chart is per cluster. Each endpoint is
+     * differenced on its own before the buckets are added, because differencing
+     * a summed counter would turn one engine restarting into a hole in the
+     * fleet's line.
      */
     const byEndpoint = new Map<string, SamplePoint[]>();
     for (const s of samples) {
@@ -280,47 +287,37 @@ function TokenHistoryCard({
     const ts = [...new Set(samples.map((s) => s.ts))].sort((a, b) => a - b);
     const index = new Map(ts.map((t, i) => [t, i]));
 
-    const totals = {
-      out: new Array<number>(ts.length).fill(0),
-      in: new Array<number>(ts.length).fill(0),
-      cached: new Array<number>(ts.length).fill(0),
-    };
+    const out = new Array<number>(ts.length).fill(0);
+    const inp = new Array<number>(ts.length).fill(0);
+    const cached = new Array<number>(ts.length).fill(0);
     const seen = { out: false, in: false, cached: false };
 
     for (const rows of byEndpoint.values()) {
       rows.sort((a, b) => a.ts - b.ts);
-      const run = { out: 0, in: 0, cached: 0 };
       const prev: { out: number | null; in: number | null; cached: number | null } = {
         out: null, in: null, cached: null,
       };
-      const step = (key: "out" | "in" | "cached", v: number | null) => {
-        if (v === null) return;
-        seen[key] = true;
-        const p = prev[key];
-        if (p !== null && v >= p) run[key] += v - p;
-        prev[key] = v;
-      };
-      // Carry each endpoint's running total forward across every timestamp, so
-      // an endpoint that reported less often does not drag the sum down.
-      let cursor = 0;
-      for (let i = 0; i < ts.length; i++) {
-        while (cursor < rows.length && rows[cursor]!.ts <= ts[i]!) {
-          const r = rows[cursor]!;
-          step("out", r.genTokensTotal);
-          step("in", r.promptTokensTotal);
-          step("cached", r.cachedPromptTokensTotal);
-          cursor++;
-        }
-        totals.out[i]! += run.out;
-        totals.in[i]! += run.in;
-        totals.cached[i]! += run.cached;
+      for (const r of rows) {
+        const i = index.get(r.ts);
+        if (i === undefined) continue;
+        const step = (key: "out" | "in" | "cached", v: number | null, into: number[]) => {
+          if (v === null) return;
+          seen[key] = true;
+          const p = prev[key];
+          // A counter going backwards is a restart, which is not negative work.
+          if (p !== null && v >= p) into[i]! += v - p;
+          prev[key] = v;
+        };
+        step("out", r.genTokensTotal, out);
+        step("in", r.promptTokensTotal, inp);
+        step("cached", r.cachedPromptTokensTotal, cached);
       }
     }
 
     const series: ChartSeries[] = [
-      { label: "Output", colorVar: "--series-1", values: seen.out ? totals.out : [] },
-      { label: "Input", colorVar: "--series-3", values: seen.in ? totals.in : [] },
-      { label: "Cache hits", colorVar: "--series-4", values: seen.cached ? totals.cached : [] },
+      { label: "Output", colorVar: "--series-1", values: seen.out ? out : [] },
+      { label: "Input", colorVar: "--series-3", values: seen.in ? inp : [] },
+      { label: "Cached input", colorVar: "--series-4", values: seen.cached ? cached : [] },
     ].filter((x) => x.values.length > 0);
     if (!series.length) return null;
     return { ts, series };
@@ -328,6 +325,15 @@ function TokenHistoryCard({
 
   const shown = days === 0 ? live : stored;
   const hasData = shown !== null && shown.ts.length > 1;
+
+  const windowTotals = useMemo(() => {
+    const pick = (label: string) => shown?.series.find((s) => s.label === label)?.values ?? [];
+    return {
+      out: sumSeries(pick("Output")),
+      in: sumSeries(pick("Input")),
+      cached: sumSeries(pick("Cached input")),
+    };
+  }, [shown]);
 
   return (
     <Card
@@ -362,6 +368,27 @@ function TokenHistoryCard({
     >
       {hasData ? (
         <>
+          {/* The window's totals, so the chart has a headline the way a
+              cumulative plot used to give for free. */}
+          <div className="mb-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <span className="tnum text-[18px] font-semibold text-ink">
+              {compactTokens(windowTotals.out + windowTotals.in)}
+            </span>
+            <span className="text-[11px] text-ink-muted">
+              tokens in this window ·{" "}
+              <span className="text-[color:var(--series-3)]">in {compactTokens(windowTotals.in)}</span>
+              {windowTotals.cached > 0 && (
+                <>
+                  {" "}
+                  (<span className="text-[color:var(--series-4)]">
+                    {compactTokens(windowTotals.cached)} cached
+                  </span>
+                  , {((windowTotals.cached / Math.max(1, windowTotals.in)) * 100).toFixed(0)}%)
+                </>
+              )}{" "}
+              · <span className="text-[color:var(--series-1)]">out {compactTokens(windowTotals.out)}</span>
+            </span>
+          </div>
           <TimeChart
             ts={shown!.ts}
             series={shown!.series}
@@ -372,12 +399,11 @@ function TokenHistoryCard({
             themeKey={`${themeKey}:${range}`}
           />
           <p className="mt-2 text-[11px] leading-relaxed text-ink-muted">
-            Tokens accumulated over this window, not a rate — the slope is the throughput, the height is
-            the work done. <b>Cache hits</b> are the part of the input that a prefix cache served instead
-            of a model, so the gap between it and <b>Input</b> is what was actually computed. A restart
-            shows as a plateau rather than a drop: the engine's counter resets, and a reset is not
-            negative work.
-            {days > 0 && " Stored samples are written once a minute, so this is coarser than Live."}
+            Tokens produced in each interval, so idle reads as zero and a burst stands up — a running
+            total would climb whatever was happening. <b>Cached input</b> is the part of the prompt a
+            prefix cache served instead of a model, so the gap below <b>Input</b> is what was actually
+            computed. An engine restart contributes nothing rather than a spike downwards.
+            {days > 0 && " Stored samples are written once a minute, so each point is a minute of work."}
           </p>
         </>
       ) : (

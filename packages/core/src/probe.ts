@@ -176,6 +176,12 @@ export interface DiscoveredEndpoint {
   port: number;
   /** How it answered: Prometheus metrics, Ollama's JSON API, or OpenAI-only. */
   kind: "metrics" | "ollama" | "openai";
+  /**
+   * Model name learned at discovery, for engines whose metrics do not label it.
+   * llama.cpp is the case that needs this; vLLM and SGLang carry it on every
+   * sample and do not.
+   */
+  model?: string;
 }
 
 /**
@@ -313,7 +319,19 @@ for p in \$(ss -tlnH 2>/dev/null | awk '{print \$4}' | grep -vE '^10\.100\.' | s
   sig=\$(curl -s -m 2 "http://127.0.0.1:\$p/metrics" 2>/dev/null \\
         | grep -m1 -oE '^(vllm:|sglang:|llamacpp:|tgi_|nv_inference)')
   if [ -n "\$sig" ]; then
-    printf 'PORT${US}%s${US}metrics\\n' "\$p"
+    # Ask what model is loaded.
+    #
+    # Prometheus labels carry it for vLLM and SGLang, but llama.cpp's metrics
+    # are unlabelled — so without this an endpoint that is serving perfectly
+    # well appears nameless. /v1/models answers for anything OpenAI-compatible;
+    # /props is llama.cpp's own and returns a filesystem path.
+    m=\$(curl -s -m 1 "http://127.0.0.1:\$p/v1/models" 2>/dev/null | head -c 600 \\
+         | tr ',' '\\n' | grep -m1 '"id"' | sed 's/.*"id"[[:space:]]*:[[:space:]]*"//; s/".*//')
+    if [ -z "\$m" ]; then
+      m=\$(curl -s -m 1 "http://127.0.0.1:\$p/props" 2>/dev/null | head -c 900 \\
+           | tr ',' '\\n' | grep -m1 'model_path' | sed 's/.*"model_path"[[:space:]]*:[[:space:]]*"//; s/".*//')
+    fi
+    printf 'PORT${US}%s${US}metrics${US}%s\\n' "\$p" "\$m"
     continue
   fi
   ol=\$(curl -s -m 1 "http://127.0.0.1:\$p/api/ps" 2>/dev/null | head -c 200)

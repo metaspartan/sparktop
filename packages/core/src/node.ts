@@ -744,6 +744,17 @@ export class NodeCollector extends EventEmitter {
        * metrics with the served alias ("deepseek-v4-flash-0731"). Comparing on
        * alphanumerics only, in either direction, links them.
        */
+      /*
+       * Fall back to the name discovery found.
+       *
+       * vLLM and SGLang label every metric with the served model, so this is
+       * never needed for them. llama.cpp's metrics carry no labels at all, and
+       * an endpoint serving happily would otherwise be listed with no model —
+       * which reads as a broken probe rather than as a quiet engine.
+       */
+      const discovered = this.endpoints.find((d) => d.port === scrape.port)?.model;
+      const models = reading.models.length ? reading.models : discovered ? [discovered] : [];
+
       const norm = (v: string) => v.toLowerCase().replace(/[^a-z0-9]/g, "");
       const served = reading.models.map(norm).filter(Boolean);
       const container = this.slow.docker.containers.find((c) => {
@@ -759,7 +770,7 @@ export class NodeCollector extends EventEmitter {
         port: scrape.port,
         engine: reading.engine,
         engineLabel: reading.engineLabel,
-        models: reading.models,
+        models: models,
         reachable: true,
         requestsRunning: reading.requestsRunning ?? null,
         requestsWaiting: reading.requestsWaiting ?? null,
