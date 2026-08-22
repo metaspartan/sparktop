@@ -296,8 +296,8 @@ Two tiers, because they have very different costs:
 
 | Tier | Interval | Contents |
 |---|---|---|
-| Fast | 1 s | GPU, CPU, memory, thermals, RDMA and network counters |
-| Slow | 10 s | Docker inventory, disks, addressing, hardware detail |
+| Fast | 5 s | GPU, CPU, memory, thermals, RDMA and network counters |
+| Slow | 30 s | Docker inventory, disks, addressing, hardware detail |
 
 The probe scripts are tuned for it. Reading sysfs with a loop of `cat` costs ~100 forks and measured **890 ms** per poll on a Spark; reading whole globs with one `grep -H .` and parsing paths in TypeScript, plus naming the ~18 RDMA counters actually used instead of globbing them (every `hw_counters` read traps into NIC firmware), brings the same data back in **~150 ms**.
 
@@ -309,9 +309,9 @@ Measured on a GB10 while it was serving:
 
 | | wall | CPU |
 |---|---|---|
-| Fast poll (every 1s) | 0.13–0.18 s | 0.08 s |
-| Slow poll, steady state (every 10s) | **0.28 s** | 0.31 s |
-| Slow poll with container stats (every 3rd) | ~1.5 s | 0.33 s |
+| Fast poll (every 5s) | 0.13–0.18 s | 0.08 s |
+| Slow poll, steady state (every 30s) | **0.28 s** | 0.31 s |
+| Slow poll with container stats (every 3rd, so ~90s) | ~1.5 s | 0.33 s |
 | Slow poll with endpoint discovery (on port change, else every 5 min) | 5.3 s | 0.40 s |
 
 The two costly sections are opt-in per poll, because both were being paid every
@@ -323,8 +323,16 @@ work. It now runs when the listening set moves, and otherwise every few minutes.
 second; it runs every third poll, with the previous reading carried forward in
 between.
 
-If a node is doing something more important than being watched, `SPARKTOP_FAST_MS`
-and `SPARKTOP_SLOW_MS` raise the intervals.
+Per node, that comes to about **15 SSH execs and 13 engine scrapes a minute**.
+The defaults are deliberately unhurried: a GB10 serving a model busy-polls in
+both the inference and NCCL paths, so it loses throughput to *being interrupted*
+out of proportion to the CPU a monitor actually uses. Five seconds shows
+everything worth seeing about GPU load, temperature and fabric throughput.
+
+`SPARKTOP_FAST_MS=1000` restores per-second sampling on a node that is not busy.
+A config file written by an earlier version, which stored the old one-second
+default, is moved to the new one on load; an interval anyone actually chose is
+left alone.
 
 ### GB10 specifics
 
@@ -573,8 +581,8 @@ Everything is optional; nodes can also be managed at runtime through the API or 
 | `SPARKTOP_PORT` | `5757` | Listen port |
 | `SPARKTOP_HOST` | `0.0.0.0` | Bind address |
 | `SPARKTOP_CONFIG` | `./config/nodes.json` | Node registry path |
-| `SPARKTOP_FAST_MS` | `1000` | Fast tier interval |
-| `SPARKTOP_SLOW_MS` | `10000` | Slow tier interval |
+| `SPARKTOP_FAST_MS` | `5000` | Fast tier interval |
+| `SPARKTOP_SLOW_MS` | `30000` | Slow tier interval |
 | `NO_COLOR` | — | Disable TUI colour |
 
 ### Security

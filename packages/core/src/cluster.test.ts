@@ -7,7 +7,11 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { buildClusterSnapshot, inferJobs, newAnalysisState, pairFabricPorts } from "./cluster.ts";
+import { loadConfig } from "./config.ts";
 import { encryptSecret, decryptSecret, safeEqual } from "./crypto.ts";
 import { fmtBps, fmtBytes, fmtDuration, fmtGbps, shortImage } from "./format.ts";
 import type { DockerContainer, FabricPort, NodeSnapshot, GpuMetrics } from "./types.ts";
@@ -477,5 +481,39 @@ describe("GB10 low-clock detection", () => {
 
   test("says nothing for a node with no GPU", () => {
     expect(withGpu(null).warnings.filter((w) => w.id.startsWith("gpu-clock-"))).toHaveLength(0);
+  });
+});
+
+describe("interval defaults", () => {
+  const tmp = () => join(tmpdir(), `sparktop-cfg-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
+
+  test("moves a config still carrying the superseded per-second defaults", async () => {
+    /*
+     * A stored value normally beats a default, which would have left every
+     * existing install polling once a second forever — the exact load the new
+     * defaults exist to avoid.
+     */
+    const p = tmp();
+    writeFileSync(p, JSON.stringify({ nodes: [], fastIntervalMs: 1000, slowIntervalMs: 10_000, historySize: 300 }));
+    const cfg = await loadConfig(p);
+    expect(cfg.fastIntervalMs).toBe(5_000);
+    expect(cfg.slowIntervalMs).toBe(30_000);
+    rmSync(p, { force: true });
+  });
+
+  test("leaves a deliberately chosen interval alone", async () => {
+    // Anything that is not the old default was picked by someone.
+    const p = tmp();
+    writeFileSync(p, JSON.stringify({ nodes: [], fastIntervalMs: 2_000, slowIntervalMs: 15_000, historySize: 300 }));
+    const cfg = await loadConfig(p);
+    expect(cfg.fastIntervalMs).toBe(2_000);
+    expect(cfg.slowIntervalMs).toBe(15_000);
+    rmSync(p, { force: true });
+  });
+
+  test("a fresh install gets the gentler defaults", async () => {
+    const cfg = await loadConfig(join(tmpdir(), "sparktop-does-not-exist.json"));
+    expect(cfg.fastIntervalMs).toBe(5_000);
+    expect(cfg.slowIntervalMs).toBe(30_000);
   });
 });

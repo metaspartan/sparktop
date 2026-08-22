@@ -112,6 +112,16 @@ const LATENCY_WINDOW_MS = 60_000;
  */
 const THROUGHPUT_WINDOW_MS = 10_000;
 
+/**
+ * The throughput window has to hold several samples to mean anything.
+ *
+ * Ten seconds is the right floor at a one-second poll, and the wrong window at
+ * a five-second one — it would leave a single delta, which is the noisy
+ * per-sample figure the window exists to smooth away. Scaling with the interval
+ * keeps at least three samples in it whatever the poll rate.
+ */
+const throughputWindowMs = (fastMs: number): number => Math.max(THROUGHPUT_WINDOW_MS, fastMs * 3);
+
 export interface NodeCollectorEvents {
   snapshot: (s: NodeSnapshot) => void;
   status: (status: NodeStatus, error: string | null) => void;
@@ -695,7 +705,8 @@ export class NodeCollector extends EventEmitter {
         specDrafted: reading.specDraftedTotal,
         specDrafts: reading.specDraftsTotal,
       });
-      while (tokens.length > 1 && ts - tokens[0]!.t > THROUGHPUT_WINDOW_MS) tokens.shift();
+      const tokenWindowMs = throughputWindowMs(this.cfg.intervalMs ?? this.intervals.fastMs);
+      while (tokens.length > 1 && ts - tokens[0]!.t > tokenWindowMs) tokens.shift();
       this.tokenWindow.set(key, tokens);
       const base = tokens.length > 1 ? tokens[0]! : undefined;
 

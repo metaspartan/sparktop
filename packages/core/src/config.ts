@@ -12,10 +12,24 @@ import { randomUUID } from "node:crypto";
 import type { AppConfig, NodeConfig, PublicNodeConfig } from "./types.ts";
 import { encryptSecret, hasSecret } from "./crypto.ts";
 
+/**
+ * Defaults chosen for the machines being watched, not for the dashboard.
+ *
+ * A GB10 serving a model is unusually sensitive to being interrupted: the
+ * inference and NCCL paths busy-poll, so a monitor that takes a slice of CPU
+ * every second costs throughput out of proportion to the slice. Five seconds
+ * loses nothing worth seeing — GPU load, temperature and fabric throughput do
+ * not carry meaningful detail below that — and cuts the interruptions by 80%.
+ *
+ * A 300-sample ring at this interval holds 25 minutes of history rather than
+ * five, which is more useful for spotting what happened than a denser window.
+ * Set SPARKTOP_FAST_MS=1000 to go back to per-second sampling on a node that
+ * is not busy.
+ */
 export const DEFAULT_CONFIG: AppConfig = {
   nodes: [],
-  fastIntervalMs: 1000,
-  slowIntervalMs: 10_000,
+  fastIntervalMs: 5_000,
+  slowIntervalMs: 30_000,
   historySize: 300,
 };
 
@@ -23,14 +37,30 @@ export function configPath(): string {
   return resolve(process.env.SPARKTOP_CONFIG ?? join(process.cwd(), "config", "nodes.json"));
 }
 
+/**
+ * Intervals the old defaults wrote into every config file.
+ *
+ * A config written by an earlier version carries these whether or not anyone
+ * chose them, and a stored value beats a new default — so without this every
+ * existing install would keep polling once a second forever, which is exactly
+ * the load the new defaults exist to avoid. A value equal to the old default is
+ * treated as "never chosen" and moves; anything else is a deliberate setting
+ * and is left alone.
+ */
+const SUPERSEDED_INTERVALS = { fastIntervalMs: 1000, slowIntervalMs: 10_000 };
+
 export async function loadConfig(path = configPath()): Promise<AppConfig> {
   try {
     const parsed = JSON.parse(await readFile(path, "utf8")) as Partial<AppConfig>;
-    return {
+    const merged: AppConfig = {
       ...DEFAULT_CONFIG,
       ...parsed,
       nodes: (parsed.nodes ?? []).map(normalizeNode),
     };
+    for (const key of ["fastIntervalMs", "slowIntervalMs"] as const) {
+      if (parsed[key] === SUPERSEDED_INTERVALS[key]) merged[key] = DEFAULT_CONFIG[key];
+    }
+    return merged;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return { ...DEFAULT_CONFIG };
     throw new Error(`Failed to read config at ${path}: ${(err as Error).message}`);
