@@ -1,27 +1,22 @@
 # Install (or with -Remove, uninstall) a hidden logon autostart entry for the
 # sparktop dashboard. Uses the current user's Startup folder, so no admin
-# rights are required. The entry runs scripts\start-dashboard.cmd window-less
-# at logon; output lands in server.log at the repo root.
+# rights are required. At logon, wscript runs scripts\dashboard-launch.vbs,
+# which starts the server in a hidden, detached console; output lands in
+# server.log at the repo root.
 param([switch]$Remove)
 
 $repo = Split-Path -Parent $PSScriptRoot
-$cmd = Join-Path $repo "scripts\start-dashboard.cmd"
+$vbsSrc = Join-Path $PSScriptRoot "dashboard-launch.vbs"
 $startup = [Environment]::GetFolderPath("Startup")
-$vbs = Join-Path $startup "sparktop-dashboard.vbs"
+$vbsDst = Join-Path $startup "sparktop-dashboard.vbs"
 
 if ($Remove) {
-  if (Test-Path $vbs) { Remove-Item $vbs -Force; Write-Output "Removed $vbs" }
-  else { Write-Output "Not installed ($vbs missing)" }
+  if (Test-Path $vbsDst) { Remove-Item $vbsDst -Force; Write-Output "Removed $vbsDst" }
+  else { Write-Output "Not installed ($vbsDst missing)" }
   return
 }
 
-if (-not (Test-Path $cmd)) { throw "Missing $cmd" }
-
-# wscript hosts this so the cmd runs with no visible console window.
-$template = @'
-Set sh = CreateObject("WScript.Shell")
-sh.Run "cmd /c ""<CMD>""", 0, False
-'@
-Set-Content -Path $vbs -Value $template.Replace("<CMD>", $cmd) -Encoding ASCII
-Write-Output "Installed autostart: $vbs"
-Write-Output "  runs at logon: $cmd"
+if (-not (Test-Path $vbsSrc)) { throw "Missing $vbsSrc" }
+Copy-Item $vbsSrc $vbsDst -Force
+Write-Output "Installed autostart: $vbsDst"
+Write-Output "  runs at logon: $(Join-Path $PSScriptRoot 'start-dashboard.cmd') (hidden console)"
