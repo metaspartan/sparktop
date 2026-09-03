@@ -34,7 +34,13 @@ export const DEFAULT_CONFIG: AppConfig = {
 };
 
 export function configPath(): string {
-  return resolve(process.env.SPARKTOP_CONFIG ?? join(process.cwd(), "config", "nodes.json"));
+  if (process.env.SPARKTOP_CONFIG) return resolve(process.env.SPARKTOP_CONFIG);
+  // Resolve from this file, not the working directory. The root "start" script
+  // runs the server with --cwd packages/server and the Docker image runs from
+  // /app, so a cwd-relative lookup used to point at packages/server/config
+  // and silently start with zero nodes. This file lives at
+  // <root>/packages/core/src — three levels up is <root>.
+  return resolve(import.meta.dir, "..", "..", "..", "config", "nodes.json");
 }
 
 /**
