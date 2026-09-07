@@ -45,6 +45,8 @@ export interface RunRecord {
   promptTokens: number;
   requestsServed: number;
   peakTokensPerSec: number;
+  /** Mean per-request decode speed (1000/inter-token latency), or null if no request completed. */
+  avgReqDecodeTokensPerSec: number | null;
   durationSec: number;
 }
 
@@ -114,7 +116,9 @@ export class HistoryDb {
         last_prompt_tokens REAL,
         start_requests REAL,
         last_requests REAL,
-        peak_tokens_per_sec REAL NOT NULL DEFAULT 0
+        peak_tokens_per_sec REAL NOT NULL DEFAULT 0,
+        avg_req_decode_sum REAL NOT NULL DEFAULT 0,
+        avg_req_decode_count REAL NOT NULL DEFAULT 0
       );
       CREATE INDEX IF NOT EXISTS runs_open ON runs (endpoint_id, model, ended_at);
       CREATE INDEX IF NOT EXISTS runs_time ON runs (started_at DESC);
@@ -143,6 +147,19 @@ export class HistoryDb {
      */
     this.addColumn("samples", "prompt_tokens_per_sec", "REAL");
     this.addColumn("samples", "prompt_computed_tokens_per_sec", "REAL");
+
+    /*
+     * Per-request decode speed, tracked as a running mean over the run.
+     *
+     * `decodeTokensPerSec` is a server-wide aggregate that includes idle time
+     * and concurrent queueing, so it understates what a single request sees.
+     * The engine decode-latency histogram gives a per-request figure
+     * (inter-token latency); averaging those samples over the run is what a
+     * user actually experienced. Accumulated as sum/count so a restart never
+     * produces a partial mean.
+     */
+    this.addColumn("runs", "avg_req_decode_sum", "REAL NOT NULL DEFAULT 0");
+    this.addColumn("runs", "avg_req_decode_count", "REAL NOT NULL DEFAULT 0");
     /*
      * The engines' own cumulative counters, kept alongside the rates.
      *
@@ -197,20 +214,24 @@ export class HistoryDb {
   }
 
   private updateRuns(ts: number, endpoints: InferenceEndpoint[]): void {
-    const openStmt = this.db.query<{ id: number; last_seen_at: number; peak_tokens_per_sec: number }, [string, string]>(
-      `SELECT id, last_seen_at, peak_tokens_per_sec FROM runs
+    const openStmt = this.db.query<
+      { id: number; last_seen_at: number; peak_tokens_per_sec: number; avg_req_decode_sum: number; avg_req_decode_count: number },
+      [string, string]
+    >(
+      `SELECT id, last_seen_at, peak_tokens_per_sec, avg_req_decode_sum, avg_req_decode_count FROM runs
        WHERE endpoint_id = ? AND model = ? AND ended_at IS NULL
        ORDER BY started_at DESC LIMIT 1`
     );
     const insert = this.db.query(
       `INSERT INTO runs (node_id, node_label, endpoint_id, port, engine, model, started_at, last_seen_at,
                          start_gen_tokens, last_gen_tokens, start_prompt_tokens, last_prompt_tokens,
-                         start_requests, last_requests, peak_tokens_per_sec)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                         start_requests, last_requests, peak_tokens_per_sec, avg_req_decode_sum, avg_req_decode_count)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     const update = this.db.query(
       `UPDATE runs SET last_seen_at = ?, last_gen_tokens = ?, last_prompt_tokens = ?,
-                       last_requests = ?, peak_tokens_per_sec = ?, node_label = ?
+                       last_requests = ?, peak_tokens_per_sec = ?, node_label = ?,
+                       avg_req_decode_sum = ?, avg_req_decode_count = ?
        WHERE id = ?`
     );
 
@@ -226,6 +247,9 @@ export class HistoryDb {
         const tps = e.decodeTokensPerSec ?? e.generationTokensPerSec ?? 0;
 
         if (open && ts - open.last_seen_at <= RUN_GAP_MS) {
+          const perReq = e.perRequestDecodeTokensPerSec;
+          const sum = open.avg_req_decode_sum + (perReq ?? 0);
+          const count = open.avg_req_decode_count + (perReq === null ? 0 : 1);
           update.run(
             ts,
             e.generationTokensTotal,
@@ -233,12 +257,15 @@ export class HistoryDb {
             e.requestsFinishedTotal,
             Math.max(open.peak_tokens_per_sec, tps),
             e.nodeLabel,
+            sum,
+            count,
             open.id
           );
         } else {
           // Either brand new, or resuming after a gap long enough that calling
           // it the same run would be a lie about continuity.
           if (open) this.closeRun(open.id, open.last_seen_at);
+          const perReqNew = e.perRequestDecodeTokensPerSec;
           insert.run(
             e.nodeId,
             e.nodeLabel,
@@ -254,7 +281,9 @@ export class HistoryDb {
             e.promptTokensTotal,
             e.requestsFinishedTotal,
             e.requestsFinishedTotal,
-            tps
+            tps,
+            perReqNew ?? 0,
+            perReqNew === null ? 0 : 1
           );
         }
       }
@@ -329,6 +358,7 @@ export class HistoryDb {
           start_gen_tokens: number | null; last_gen_tokens: number | null;
           start_prompt_tokens: number | null; last_prompt_tokens: number | null;
           start_requests: number | null; last_requests: number | null; peak_tokens_per_sec: number;
+          avg_req_decode_sum: number; avg_req_decode_count: number;
         },
         [number]
       >(`SELECT * FROM runs ORDER BY started_at DESC LIMIT ?`)
@@ -354,6 +384,8 @@ export class HistoryDb {
       promptTokens: delta(r.start_prompt_tokens, r.last_prompt_tokens),
       requestsServed: delta(r.start_requests, r.last_requests),
       peakTokensPerSec: Math.round(r.peak_tokens_per_sec * 10) / 10,
+      avgReqDecodeTokensPerSec:
+        r.avg_req_decode_count > 0 ? Math.round((r.avg_req_decode_sum / r.avg_req_decode_count) * 10) / 10 : null,
       durationSec: Math.max(0, Math.round(((r.ended_at ?? r.last_seen_at) - r.started_at) / 1000)),
     }));
   }

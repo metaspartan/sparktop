@@ -25,6 +25,7 @@ interface RunRecord {
   promptTokens: number;
   requestsServed: number;
   peakTokensPerSec: number;
+  avgReqDecodeTokensPerSec: number | null;
   durationSec: number;
 }
 
@@ -170,7 +171,7 @@ export function RunsView() {
                   <td className="tnum px-3 py-2 font-medium text-ink">{compact(r.tokensGenerated)}</td>
                   <td className="tnum px-3 py-2 text-ink-secondary">{compact(r.requestsServed)}</td>
                   <td className="tnum px-3 py-2 font-medium text-ink">
-                    {r.durationSec > 0 ? (r.tokensGenerated / r.durationSec).toFixed(1) : "—"}
+                    {r.avgReqDecodeTokensPerSec != null ? r.avgReqDecodeTokensPerSec.toFixed(1) : "—"}
                   </td>
                   <td className="tnum px-3 py-2 text-ink-secondary">{r.peakTokensPerSec.toFixed(0)}/s</td>
                 </tr>
