@@ -145,6 +145,7 @@ export function RunsView() {
                 <th className="px-3 py-2 font-medium">Duration</th>
                 <th className="px-3 py-2 font-medium">Tokens</th>
                 <th className="px-3 py-2 font-medium">Requests</th>
+                <th className="px-3 py-2 font-medium">Avg tok/s</th>
                 <th className="px-3 py-2 font-medium">Peak</th>
               </tr>
             </thead>
@@ -168,6 +169,9 @@ export function RunsView() {
                   <td className="tnum px-3 py-2 text-ink-secondary">{fmtDuration(r.durationSec)}</td>
                   <td className="tnum px-3 py-2 font-medium text-ink">{compact(r.tokensGenerated)}</td>
                   <td className="tnum px-3 py-2 text-ink-secondary">{compact(r.requestsServed)}</td>
+                  <td className="tnum px-3 py-2 font-medium text-ink">
+                    {r.durationSec > 0 ? (r.tokensGenerated / r.durationSec).toFixed(1) : "—"}
+                  </td>
                   <td className="tnum px-3 py-2 text-ink-secondary">{r.peakTokensPerSec.toFixed(0)}/s</td>
                 </tr>
               ))}
