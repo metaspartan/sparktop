@@ -18,8 +18,14 @@ export type SectionId = "nodes" | "inference" | "runs" | "fabric" | "jobs" | "ch
  * so a fault never has to be scrolled to.
  */
 export const SECTIONS: { id: SectionId; label: string; description: string }[] = [
+  /*
+   * Throughput leads. The panel heads the Inference section, and an operator
+   * opening a serving dashboard is asking "how fast is it" before "how much
+   * memory is the second node using" -- so the section that answers that comes
+   * first and the per-node detail follows it.
+   */
+  { id: "inference", label: "Throughput & inference", description: "Per-request and aggregate tokens/sec, latency, engines, requests in flight" },
   { id: "nodes", label: "Spark nodes", description: "Per-node GPU, memory, processes and containers" },
-  { id: "inference", label: "Inference", description: "Detected engines, tokens/sec, requests in flight" },
   { id: "runs", label: "Run history", description: "Past serving sessions, tokens and requests" },
   { id: "fabric", label: "Interconnect", description: "Topology, per-link throughput and health" },
   { id: "jobs", label: "Distributed workloads", description: "Jobs spanning more than one node" },
@@ -28,8 +34,8 @@ export const SECTIONS: { id: SectionId; label: string; description: string }[] =
 ];
 
 const DEFAULT_ORDER: SectionId[] = SECTIONS.map((s) => s.id);
-// v5: the section set changed again, so older layouts are not carried over.
-const KEY = "sparktop-layout-v5";
+// v6: throughput leads the page, so a saved v5 order is not carried over.
+const KEY = "sparktop-layout-v6";
 
 export type Density = "comfortable" | "compact";
 
