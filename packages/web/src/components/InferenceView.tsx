@@ -93,7 +93,7 @@ export function InferenceView({ nodes, history, themeKey }: Props) {
           <Stat
             label="Output"
             value={`${Math.round(totalTokens * 10) / 10}`}
-            sub={`tok/s · ${compactTokens(cumulativeOut)} total`}
+            sub={`tok/s aggregate · ${compactTokens(cumulativeOut)} total`}
           />
           {/* The headline input figure is the computed one. Counting cache
               hits reports tokens the model never processed, which on a long

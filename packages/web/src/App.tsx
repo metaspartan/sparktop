@@ -10,6 +10,7 @@ import { Settings } from "./components/Settings";
 import { Setup } from "./components/Setup";
 import { FabricView } from "./components/FabricView";
 import { InferenceView } from "./components/InferenceView";
+import { ThroughputHero } from "./components/ThroughputHero";
 import { ControlsView } from "./components/ControlsView";
 import { RunsView } from "./components/RunsView";
 import { NodeCard } from "./components/NodeCard";
@@ -33,7 +34,15 @@ export default function App() {
         ))}
       </div>
     ),
-    inference: snapshot && <InferenceView nodes={snapshot.nodes} history={history} themeKey={resolved} />,
+    inference: snapshot && (
+      <div className={`flex flex-col ${gap}`}>
+        {/* Throughput leads the page. It is the figure the dashboard exists to
+            show, and burying it below two node cards meant the first thing
+            anyone read was a CPU graph. */}
+        <ThroughputHero totals={snapshot.totals} history={history} themeKey={resolved} />
+        <InferenceView nodes={snapshot.nodes} history={history} themeKey={resolved} />
+      </div>
+    ),
     runs: snapshot && <RunsView />,
     fabric: snapshot && <FabricView snap={snapshot} history={history} themeKey={resolved} />,
     jobs: snapshot && <Jobs jobs={snapshot.jobs} />,
@@ -211,11 +220,25 @@ function SummaryStrip({ snap }: { snap: ClusterSnapshot }) {
     { label: "Temp", value: fmtTemp(t.maxTempC), sub: "peak" },
     { label: "Power", value: fmtWatts(t.powerDrawW), sub: "GPU" },
     ...(t.inferenceEndpoints > 0
-      ? [{
-          label: "Tokens",
-          value: `${t.tokensPerSec}/s`,
-          sub: `${t.requestsRunning} running${t.requestsWaiting ? ` · ${t.requestsWaiting} queued` : ""}`,
-        }]
+      ? [
+          /*
+           * Per-request rate leads, aggregate follows. The header is the first
+           * thing on screen and it should carry the number that matches what a
+           * caller experiences, not the fleet total that rises with batching.
+           */
+          ...(t.perRequestTokensPerSec !== null
+            ? [{
+                label: "Per request",
+                value: `${t.perRequestTokensPerSec}`,
+                sub: "tok/s decode",
+              }]
+            : []),
+          {
+            label: "Tokens",
+            value: `${t.tokensPerSec}/s`,
+            sub: `${t.requestsRunning} running${t.requestsWaiting ? ` · ${t.requestsWaiting} queued` : ""}`,
+          },
+        ]
       : []),
     { label: "Nodes", value: `${t.nodesOnline}/${t.nodes}`, sub: `${t.containers} containers` },
   ];

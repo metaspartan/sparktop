@@ -611,6 +611,39 @@ export interface ClusterSnapshot {
     /** Prompt tokens served from a prefix cache rather than recomputed. */
     cachedPromptTokensTotal: number;
     /** Requests currently generating, across all endpoints. */
+    /**
+     * Mean per-request decode speed across engines, tok/s -- the rate one
+     * request actually experiences, as distinct from `tokensPerSec`, which is
+     * the cluster's aggregate output rate.
+     *
+     * These diverge, and the gap is the whole story on a loaded server: the
+     * aggregate counts every token every engine emits, so it stays high while
+     * per-request speed falls as concurrency rises. Someone waiting on a
+     * response feels this number, not the aggregate.
+     *
+     * Null when no engine reports a decode-latency histogram, since a
+     * per-request rate cannot be derived from cumulative counters alone.
+     */
+    perRequestTokensPerSec: number | null;
+    /**
+     * Mean time per output token during decode, milliseconds, over the same
+     * window as `perRequestTokensPerSec`. Null for the same reason.
+     */
+    interTokenLatencyMs: number | null;
+    /**
+     * Share of draft tokens accepted by the target model, 0-100 -- the
+     * speculative-decode acceptance rate. Null when no engine reports one.
+     */
+    specAcceptancePct: number | null;
+    /** Requests completed per minute, summed across engines. */
+    requestsPerMin: number;
+    /**
+     * Mean prefix-cache hit rate, 0-100, over the recent window rather than a
+     * server's lifetime. Null when no engine reports cache hits.
+     */
+    promptCacheHitPct: number | null;
+    /** Mean KV-cache occupancy, 0-100, across endpoints reporting it. */
+    kvCachePct: number | null;
     requestsRunning: number;
     requestsWaiting: number;
   };

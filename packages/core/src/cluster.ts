@@ -576,6 +576,18 @@ function rollUp(nodes: NodeSnapshot[]): ClusterSnapshot["totals"] {
   let inferenceEndpoints = 0, tokensPerSec = 0, requestsRunning = 0, requestsWaiting = 0;
   let promptTokensPerSec = 0, promptComputedTokensPerSec = 0;
   let generationTokensTotal = 0, promptTokensTotal = 0, cachedPromptTokensTotal = 0;
+  let requestsPerMin = 0;
+  /*
+   * These four are means, not sums, so they are accumulated as running sums
+   * with a count of the endpoints that actually reported them. A null stays
+   * null rather than collapsing to zero, so an engine with no decode-latency
+   * histogram does not read as a server that decodes instantly.
+   */
+  let perReqSum = 0, perReqN = 0;
+  let itlSum = 0, itlN = 0;
+  let specSum = 0, specN = 0;
+  let hitSum = 0, hitN = 0;
+  let kvSum = 0, kvN = 0;
   /*
    * Guard against counting one server twice.
    *
@@ -606,6 +618,27 @@ function rollUp(nodes: NodeSnapshot[]): ClusterSnapshot["totals"] {
       cachedPromptTokensTotal += e.cachedPromptTokensTotal ?? 0;
       requestsRunning += e.requestsRunning ?? 0;
       requestsWaiting += e.requestsWaiting ?? 0;
+      requestsPerMin += e.requestsPerMin ?? 0;
+      if (e.perRequestDecodeTokensPerSec !== null) {
+        perReqSum += e.perRequestDecodeTokensPerSec;
+        perReqN++;
+      }
+      if (e.interTokenLatencyMs !== null) {
+        itlSum += e.interTokenLatencyMs;
+        itlN++;
+      }
+      if (e.specAcceptanceRatePct !== null) {
+        specSum += e.specAcceptanceRatePct;
+        specN++;
+      }
+      if (e.promptCacheHitPct !== null) {
+        hitSum += e.promptCacheHitPct;
+        hitN++;
+      }
+      if (e.kvCachePct !== null) {
+        kvSum += e.kvCachePct;
+        kvN++;
+      }
     }
     if (n.gpu) {
       gpus++;
@@ -640,6 +673,17 @@ function rollUp(nodes: NodeSnapshot[]): ClusterSnapshot["totals"] {
     generationTokensTotal,
     promptTokensTotal,
     cachedPromptTokensTotal,
+    // Unweighted means across the endpoints that reported a value. A single
+    // number is the honest summary here: per-request speed is a property of
+    // what a caller experiences, so averaging it beats summing it, and a
+    // cluster with two independent servers does not decode at 2x either rate.
+    perRequestTokensPerSec:
+      perReqN > 0 ? Math.round((perReqSum / perReqN) * 10) / 10 : null,
+    interTokenLatencyMs: itlN > 0 ? Math.round((itlSum / itlN) * 10) / 10 : null,
+    specAcceptancePct: specN > 0 ? Math.round((specSum / specN) * 10) / 10 : null,
+    requestsPerMin: Math.round(requestsPerMin * 10) / 10,
+    promptCacheHitPct: hitN > 0 ? Math.round((hitSum / hitN) * 10) / 10 : null,
+    kvCachePct: kvN > 0 ? Math.round((kvSum / kvN) * 10) / 10 : null,
     requestsRunning,
     requestsWaiting,
   };

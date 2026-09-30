@@ -128,6 +128,20 @@ export function historySample(snap: ClusterSnapshot): Record<string, number> {
       out[`infer:${e.id}:promptTotal`] = e.promptTokensTotal ?? NaN;
       out[`infer:${e.id}:cachedTotal`] = e.cachedPromptTokensTotal ?? NaN;
       out[`infer:${e.id}:ttft`] = e.latencyBasis === "window" && e.ttftMs !== null ? e.ttftMs : NaN;
+      /*
+       * Per-request decode speed, the rate a caller actually sees.
+       *
+       * The `:tokens` series above is the endpoint's aggregate output rate,
+       * which keeps climbing with concurrency while this one falls. Neither
+       * is redundant: together their ratio is the batch size, which is the
+       * single most useful thing to see when a server feels slow.
+       */
+      out[`infer:${e.id}:perReq`] = e.perRequestDecodeTokensPerSec ?? NaN;
+      out[`infer:${e.id}:itl`] = e.interTokenLatencyMs ?? NaN;
+      out[`infer:${e.id}:kv`] = e.kvCachePct ?? NaN;
+      out[`infer:${e.id}:cacheHit`] = e.promptCacheHitPct ?? NaN;
+      out[`infer:${e.id}:rpm`] = e.requestsPerMin ?? NaN;
+      out[`infer:${e.id}:specAccept`] = e.specAcceptanceRatePct ?? NaN;
     }
   }
 
@@ -141,6 +155,14 @@ export function historySample(snap: ClusterSnapshot): Record<string, number> {
   out["cluster:genTotal"] = snap.totals.generationTokensTotal;
   out["cluster:promptTotal"] = snap.totals.promptTokensTotal;
   out["cluster:cachedTotal"] = snap.totals.cachedPromptTokensTotal;
+  // Fleet-wide per-request speed and its reciprocal, so the header and the
+  // charts read from one source and cannot disagree.
+  out["cluster:perReq"] = snap.totals.perRequestTokensPerSec ?? NaN;
+  out["cluster:itl"] = snap.totals.interTokenLatencyMs ?? NaN;
+  out["cluster:rpm"] = snap.totals.requestsPerMin;
+  out["cluster:specAccept"] = snap.totals.specAcceptancePct ?? NaN;
+  out["cluster:cacheHit"] = snap.totals.promptCacheHitPct ?? NaN;
+  out["cluster:kv"] = snap.totals.kvCachePct ?? NaN;
 
   return out;
 }

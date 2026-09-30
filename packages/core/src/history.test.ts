@@ -159,4 +159,54 @@ describe("inference series", () => {
     expect(row["cluster:tokensIn"]).toBeDefined();
     expect(row["cluster:tokensComputed"]).toBeDefined();
   });
+
+  /*
+   * Per-request decode speed is the figure the throughput panel leads with, so
+   * it has to survive the round trip into a chartable series -- and an engine
+   * that cannot report it has to leave a gap rather than a misleading zero.
+   */
+  test("carries per-request decode speed and its supporting series", () => {
+    const row = historySample(
+      snapshotWithEndpoint({
+        perRequestDecodeTokensPerSec: 11.4,
+        interTokenLatencyMs: 87.8,
+        specAcceptanceRatePct: 90.9,
+        kvCachePct: 42,
+      })
+    );
+    expect(row["infer:n1:8888:perReq"]).toBe(11.4);
+    expect(row["infer:n1:8888:itl"]).toBe(87.8);
+    expect(row["infer:n1:8888:kv"]).toBe(42);
+    expect(row["infer:n1:8888:cacheHit"]).toBe(90);
+    expect(row["infer:n1:8888:rpm"]).toBe(6);
+    expect(row["infer:n1:8888:specAccept"]).toBe(90.9);
+  });
+
+  test("an engine with no per-request rate leaves a gap, not a zero", () => {
+    const row = historySample(snapshotWithEndpoint({}));
+    // The default endpoint reports perRequestDecodeTokensPerSec: null. A zero
+    // here would render as "decoding infinitely slowly" instead of "unknown".
+    expect(Number.isNaN(row["infer:n1:8888:perReq"])).toBe(true);
+    expect(Number.isNaN(row["infer:n1:8888:itl"])).toBe(true);
+  });
+
+  test("fleet-wide per-request series mirror the totals", () => {
+    const s = snapshotWithEndpoint({});
+    s.totals = {
+      ...s.totals,
+      perRequestTokensPerSec: 11.4,
+      interTokenLatencyMs: 87.8,
+      requestsPerMin: 6,
+      specAcceptancePct: 90.9,
+      promptCacheHitPct: 92.7,
+      kvCachePct: 42,
+    };
+    const row = historySample(s);
+    expect(row["cluster:perReq"]).toBe(11.4);
+    expect(row["cluster:itl"]).toBe(87.8);
+    expect(row["cluster:rpm"]).toBe(6);
+    expect(row["cluster:specAccept"]).toBe(90.9);
+    expect(row["cluster:cacheHit"]).toBe(92.7);
+    expect(row["cluster:kv"]).toBe(42);
+  });
 });
