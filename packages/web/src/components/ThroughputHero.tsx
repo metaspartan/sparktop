@@ -79,12 +79,19 @@ export function ThroughputHero({ totals, history, themeKey }: Props) {
   /*
    * Effective batch size, from the only two counters that can produce it.
    *
-   * A value below 1 would mean the aggregate is understating what is being
-   * emitted, which is a measurement artefact rather than a real state, so it
-   * is withheld rather than shown as a fraction of a request.
+   * The two rates are measured over different windows. Per-request speed comes
+   * from the engine's decode-latency histogram and is current within the
+   * second; the aggregate is a delta of a cumulative counter over the scrape
+   * interval, so straight after an idle stretch it still carries the idle time
+   * and reads low. Their ratio therefore dips below 1 for a few seconds after
+   * traffic resumes, which is a windowing artefact rather than a real batch
+   * size, and a "0.3" there would be a fraction of a single request.
+   *
+   * So the ratio is withheld below 1 and resumes as soon as the aggregate has
+   * caught up. A genuine batch size is never less than one anyway.
    */
-  const batch =
-    perReq !== null && perReq > 0 && aggregate > 0 ? aggregate / perReq : null;
+  const ratio = perReq !== null && perReq > 0 && aggregate > 0 ? aggregate / perReq : null;
+  const batch = ratio !== null && ratio >= 1 ? ratio : null;
 
   const series: ChartSeries[] = [
     { label: "Per request", colorVar: "--series-1", values: history?.series["cluster:perReq"] ?? [] },
