@@ -17,6 +17,7 @@
 export type EngineId =
   | "vllm"
   | "sglang"
+  | "tensorfold"
   | "llamacpp"
   | "tgi"
   | "triton"
@@ -250,6 +251,42 @@ export const ENGINE_SPECS: EngineSpec[] = [
     },
     cachedPromptTokens: [],
     specDecode: { accepted: [], drafted: [], drafts: [], perPos: [] },
+    mmCache: { hits: [], queries: [] },
+    prefixCache: { hits: [], queries: [] },
+    estimatedFlops: [],
+    estimatedReadBytes: [],
+    estimatedWriteBytes: [],
+  },
+  {
+    id: "tensorfold",
+    label: "TensorFold",
+    signature: /^tensorfold:/m,
+    running: ["tensorfold:requests_running"],
+    waiting: ["tensorfold:requests_waiting"],
+    promptTokens: ["tensorfold:prompt_tokens_total"],
+    genTokens: ["tensorfold:generation_tokens_total"],
+    finished: ["tensorfold_health:requests_total"],
+    kvCache: ["tensorfold:kv_cache_usage_ratio"],
+    kvCacheScale: 100,
+    latency: {
+      ttft: ["tensorfold:time_to_first_token_seconds"],
+      interToken: [],
+      e2e: ["tensorfold:request_latency_seconds"],
+      queue: [],
+      prefill: [],
+      decode: [],
+    },
+    cachedPromptTokens: ["tensorfold_health:cached_tokens_total"],
+
+    specDecode: {
+      // TensorFold reports MTP (multi-token prediction) acceptance, which is
+      // speculative decoding with the target model's bonus token counted on
+      // top — the +1 the dashboard already applies to per-draft length.
+      accepted: ["tensorfold:mtp_accepted_total"],
+      drafted: ["tensorfold:mtp_drafted_total"],
+      drafts: [],
+      perPos: [],
+    },
     mmCache: { hits: [], queries: [] },
     prefixCache: { hits: [], queries: [] },
     estimatedFlops: [],

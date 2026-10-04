@@ -221,7 +221,7 @@ export function buildFastProbe(endpoints: DiscoveredEndpoint[] = []): string {
        */
       const fetchCmd =
         e.kind === "metrics"
-          ? `curl -s -m 2 '${url}' 2>/dev/null | grep -E '^(vllm:|sglang:|llamacpp:|tgi_|nv_inference)' | grep -vE '_bucket[{ ]|_created[{ ]' | head -c 16384`
+          ? `curl -s -m 2 '${url}' 2>/dev/null | grep -E '^(vllm:|sglang:|llamacpp:|tgi_|nv_inference|tensorfold:|tensorfold_health:)' | grep -vE '_bucket[{ ]|_created[{ ]' | head -c 16384`
           : `curl -s -m 2 '${url}' 2>/dev/null | head -c 4096`;
       return [
         `printf 'EP${US}%s${US}%s\\n' '${e.port}' '${e.kind}'`,
@@ -336,7 +336,7 @@ for p in \$(ss -tlnH 2>/dev/null | awk '{print \$4}' | grep -vE '^10\.100\.' | s
   # vLLM /metrics opens with several hundred bytes of Python GC boilerplate, so
   # truncating the response before matching finds nothing at all.
   sig=\$(curl -s --connect-timeout 1 -m 1 "http://127.0.0.1:\$p/metrics" 2>/dev/null \\
-        | grep -m1 -oE '^(vllm:|sglang:|llamacpp:|tgi_|nv_inference)')
+        | grep -m1 -oE '^(vllm:|sglang:|llamacpp:|tgi_|nv_inference|tensorfold:|tensorfold_health:)')
   if [ -n "\$sig" ]; then
     # Ask what model is loaded.
     #

@@ -345,3 +345,42 @@ describe("per-position speculative acceptance", () => {
     expect(rates[1]).toBeCloseTo(56.9, 1);
   });
 });
+
+describe("tensorfold", () => {
+  // Live body from the DGX head node (glm53-flash-tf, port 8888), 2026-10-04.
+  const TF = `# HELP tensorfold:generation_tokens_total Total generated tokens.
+# TYPE tensorfold:generation_tokens_total counter
+tensorfold:generation_tokens_total 46766
+tensorfold:prompt_tokens_total 5427430
+tensorfold:requests_running 1
+tensorfold:requests_waiting 0
+tensorfold:kv_cache_usage_ratio{pool="0"} 0.087324
+tensorfold:mtp_drafted_total 48824
+tensorfold:mtp_accepted_total 30733
+tensorfold:request_latency_seconds_sum 4919.124076
+tensorfold:request_latency_seconds_count 98
+tensorfold:time_to_first_token_seconds_sum 2921.196225
+tensorfold:time_to_first_token_seconds_count 98
+tensorfold_health:requests_total 98
+tensorfold_health:cached_tokens_total 1648256`;
+
+  test("is detected by its metric prefix", () => {
+    expect(detectEngine(TF)!.id).toBe("tensorfold");
+  });
+
+  test("normalises the live DGX head-node scrape", () => {
+    const r = readMetrics(TF)!;
+    expect(r.engine).toBe("tensorfold");
+    expect(r.generationTokensTotal).toBe(46766);
+    expect(r.promptTokensTotal).toBe(5427430);
+    expect(r.requestsRunning).toBe(1);
+    expect(r.requestsWaiting).toBe(0);
+    expect(r.kvCachePct).toBeCloseTo(8.7324, 5);
+    expect(r.cachedPromptTokensTotal).toBe(1648256);
+    expect(r.requestsFinishedTotal).toBe(98);
+    expect(r.specAcceptedTotal).toBe(30733);
+    expect(r.specDraftedTotal).toBe(48824);
+    expect(r.latency.ttft).toEqual({ sum: 2921.196225, count: 98 });
+    expect(r.latency.e2e).toEqual({ sum: 4919.124076, count: 98 });
+  });
+});

@@ -1,7 +1,7 @@
 /**
  * Inference servers.
  *
- * Engine-neutral by design: vLLM, SGLang, llama.cpp, TGI, Triton and Ollama all
+ * Engine-neutral by design: vLLM, SGLang, TensorFold, llama.cpp, TGI, Triton and Ollama all
  * report the same four things once normalised — what is in flight, what is
  * queued, how fast tokens are coming out, and how full the KV cache is — so the
  * panel renders identically whatever is actually running.
@@ -29,7 +29,7 @@ export function InferenceView({ nodes, history, themeKey }: Props) {
       <Card title="Inference">
         <p className="text-[12px] leading-relaxed text-ink-muted">
           No inference server detected. sparktop looks for one on every locally-bound port of each
-          node and identifies vLLM, SGLang, llama.cpp, TGI, Triton and Ollama automatically — start
+          node and identifies vLLM, SGLang, TensorFold, llama.cpp, TGI, Triton and Ollama automatically — start
           one and it appears here within a few seconds.
         </p>
       </Card>

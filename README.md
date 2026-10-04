@@ -398,7 +398,7 @@ what it answers with.
 
 Detection is by what a port answers with, not by configuration — there is no
 "this is a vLLM node" setting to get wrong. The model name comes from the
-Prometheus labels where an engine sets them (vLLM, SGLang) and from `/v1/models`
+Prometheus labels where an engine sets them (vLLM, SGLang, TensorFold) and from `/v1/models`
 or llama.cpp's `/props` where it does not, so a llama.cpp server is named rather
 than listed blank.
 
