@@ -115,6 +115,25 @@ export interface GpuMetrics {
    * slow and nothing is owning up to it.
    */
   throttleReasons: { mask: string; reasons: string[] } | null;
+  /**
+   * Cumulative time the GPU has spent under each clock event, as the driver
+   * reports it in `clocks_event_reasons_counters.*`. The bitmask above says
+   * what is active *now*; these say what has been slowing the part down over
+   * its lifetime, which is what explains a persistently low SM clock when the
+   * active mask reads zero.
+   *
+   * The driver documents no unit, so these are carried as raw counts rather
+   * than converted. Treat them as monotonic indicators — a nonzero value means
+   * the event has occurred at least once. For scale, the value observed on a
+   * GB10 (2.07e10) against ~1.4e6s of uptime is consistent with microseconds,
+   * but that is an inference, not a documented contract.
+   */
+  clockEventCounters: {
+    swPowerCapping: number | null;
+    swThermalSlowdown: number | null;
+    hwThermalSlowdown: number | null;
+    hwPowerCapping: number | null;
+  } | null;
   /** Total VRAM. On unified parts this is the shared system pool. */
   vramTotalBytes: number;
   /** VRAM in use. On unified parts this is summed from live NVML processes,
@@ -337,6 +356,24 @@ export interface InferenceEndpoint {
   promptTokensTotal: number | null;
   generationTokensTotal: number | null;
   kvCachePct: number | null;
+
+  /**
+   * Speculative decoding acceptance rate per draft position, when the engine
+   * reports it. Each value is accepted_at_pos / draft steps over the window,
+   * i.e. the share of that position's draft opportunities the target accepted.
+   * A weak later position suggests dropping num_speculative_tokens.
+   */
+  specPerPosAcceptPct: (number | null)[] | null;
+  /** Multimodal (image) cache hit rate over the window, 0-100. */
+  mmCacheHitPct: number | null;
+  /** Prefix-cache hit rate over the window, 0-100 (true per-request rate). */
+  prefixCacheHitPct: number | null;
+  /** Estimated GPU FLOPs per second. */
+  estimatedFlopsPerSec: number | null;
+  /** Estimated memory read bytes per second. */
+  estimatedReadBytesPerSec: number | null;
+  /** Estimated memory write bytes per second. */
+  estimatedWriteBytesPerSec: number | null;
 
   /**
    * Decode throughput: output tokens produced per second, server-wide.

@@ -116,6 +116,23 @@ function nodeMetrics(e: Exposition, n: NodeSnapshot): void {
     if (n.gpu.throttleReasons) {
       e.metric("sparktop_gpu_throttle_reasons", "gauge", "Count of active NVML clock-event reasons, excluding idle.", n.gpu.throttleReasons.reasons.filter((r) => r !== "idle").length, gl);
     }
+    /*
+     * Lifetime clock-event counters, exported as raw driver counts.
+     *
+     * The active mask above is zero whenever nothing is throttling the part
+     * right now; these are what let a rule show that the part *has* been
+     * limited at some point. Since the driver documents no unit, they are
+     * exported verbatim rather than scaled — a rule should test these for
+     * "greater than zero", never against a wall-clock duration.
+     */
+    if (n.gpu.clockEventCounters) {
+      const cc = n.gpu.clockEventCounters;
+      const labels = (reason: string) => [...gl, ["reason", reason] as [string, string]];
+      e.metric("sparktop_gpu_clock_event_counters", "counter", "Cumulative driver count for each lifetime clock event. Unit undocumented; test for >0.", cc.swPowerCapping, labels("sw_power_cap"));
+      e.metric("sparktop_gpu_clock_event_counters", "counter", "Cumulative driver count for each lifetime clock event. Unit undocumented; test for >0.", cc.swThermalSlowdown, labels("sw_thermal_slowdown"));
+      e.metric("sparktop_gpu_clock_event_counters", "counter", "Cumulative driver count for each lifetime clock event. Unit undocumented; test for >0.", cc.hwThermalSlowdown, labels("hw_thermal_slowdown"));
+      e.metric("sparktop_gpu_clock_event_counters", "counter", "Cumulative driver count for each lifetime clock event. Unit undocumented; test for >0.", cc.hwPowerCapping, labels("hw_power_brake_slowdown"));
+    }
     e.metric("sparktop_gpu_memory_total_bytes", "gauge", "GPU memory total. On unified-memory parts this is the shared system pool.", n.gpu.vramTotalBytes, gl);
     e.metric("sparktop_gpu_memory_used_bytes", "gauge", "GPU memory in use. On unified-memory parts this is summed from live process allocations.", n.gpu.vramUsedBytes, gl);
   }
@@ -175,6 +192,21 @@ function inferenceMetrics(e: Exposition, ep: InferenceEndpoint): void {
   e.metric("sparktop_inference_kv_cache_ratio", "gauge", "KV cache utilisation, 0-1.", ratio(ep.kvCachePct), l);
   e.metric("sparktop_inference_prefix_cache_hit_ratio", "gauge", "Prompt tokens served from cache, 0-1.", ratio(ep.promptCacheHitPct), l);
   e.metric("sparktop_inference_spec_acceptance_ratio", "gauge", "Speculative draft tokens accepted, 0-1.", ratio(ep.specAcceptanceRatePct), l);
+  e.metric("sparktop_inference_spec_mean_accepted_length", "gauge", "Tokens yielded per model step under speculative decoding.", ep.specMeanAcceptedLength, l);
+  /*
+   * Per-request cache and multimodal counters.
+   *
+   * Distinct from the token-share figure above: a few very large reused prompts
+   * can inflate the token share while most requests miss.
+   */
+  ep.specPerPosAcceptPct?.forEach((v, i) => {
+    e.metric("sparktop_inference_spec_accept_by_position_ratio", "gauge", "Speculative acceptance at each draft position, 0-1.", ratio(v), [...l, ["position", String(i)]]);
+  });
+  e.metric("sparktop_inference_prefix_cache_requests_hit_ratio", "gauge", "Per-request prefix-cache hit rate, 0-1.", ratio(ep.prefixCacheHitPct), l);
+  e.metric("sparktop_inference_multimodal_cache_hit_ratio", "gauge", "Multimodal encoder cache hit rate, 0-1.", ratio(ep.mmCacheHitPct), l);
+  e.metric("sparktop_inference_estimated_flops_per_second", "gauge", "Engine-estimated FLOPs per second. Absent when the engine reports zero.", ep.estimatedFlopsPerSec, l);
+  e.metric("sparktop_inference_estimated_memory_read_bytes_per_second", "gauge", "Engine-estimated memory read bandwidth.", ep.estimatedReadBytesPerSec, l);
+  e.metric("sparktop_inference_estimated_memory_write_bytes_per_second", "gauge", "Engine-estimated memory write bandwidth.", ep.estimatedWriteBytesPerSec, l);
 
   /*
    * Latency is exported only when it describes the recent window. A lifetime

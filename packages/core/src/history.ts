@@ -54,7 +54,7 @@ class Ring {
 }
 
 /** Per-node metrics kept for charting. */
-const NODE_METRICS = ["cpu", "mem", "gpu", "vram", "temp", "power", "fabricRx", "fabricTx"] as const;
+const NODE_METRICS = ["cpu", "mem", "gpu", "vram", "temp", "power", "clock", "fabricRx", "fabricTx"] as const;
 
 /**
  * Derive one tick's worth of chart values from a snapshot.
@@ -83,6 +83,14 @@ export function historySample(snap: ClusterSnapshot): Record<string, number> {
       n.gpu && n.gpu.vramTotalBytes > 0 ? (n.gpu.vramUsedBytes / n.gpu.vramTotalBytes) * 100 : 0;
     out[key("temp")] = n.thermal.maxC ?? NaN;
     out[key("power")] = n.gpu?.powerDrawW ?? NaN;
+    /*
+     * SM clock, charted because it is the only outward sign of the GB10
+     * silent-throttle fault: utilisation, power state and the throttle mask all
+     * read normal while the part sits at a fraction of its ceiling. A trend is
+     * what tells a transient dip apart from a part that has been stuck for
+     * hours, and no other recorded series shows it — GPU utilisation stays pegged.
+     */
+    out[key("clock")] = n.gpu?.smClockMhz ?? NaN;
 
     let rx = 0;
     let tx = 0;

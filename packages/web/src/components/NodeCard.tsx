@@ -546,6 +546,23 @@ function ClockRow({ gpu }: { gpu: NonNullable<NodeSnapshot["gpu"]> }) {
   const low = pct !== null && pct < 60 && gpu.utilPct >= 50;
   const tone = !low ? "text-ink" : declared.length ? "text-[color:var(--status-warning)]" : "text-[color:var(--status-critical)]";
 
+  /*
+   * Lifetime clock-event counts, when the driver reports them. The active mask
+   * says what is throttling the part right now; these say what has slowed it
+   * over its lifetime. A live mask that reads zero while one of these is large
+   * is the strongest evidence that the part has been limited at some point but
+   * is not admitting to it now — the same gap the alert below exists to catch.
+   */
+  const c = gpu.clockEventCounters;
+  const lifetime = c
+    ? [
+        c.swPowerCapping ? "software power cap" : null,
+        c.swThermalSlowdown ? "software thermal slowdown" : null,
+        c.hwThermalSlowdown ? "hardware thermal slowdown" : null,
+        c.hwPowerCapping ? "hardware power brake" : null,
+      ].filter(Boolean)
+    : [];
+
   return (
     <div className="flex items-baseline justify-between gap-3 text-[12px]">
       <span className="shrink-0 text-ink-muted">SM clock</span>
@@ -555,9 +572,13 @@ function ClockRow({ gpu }: { gpu: NonNullable<NodeSnapshot["gpu"]> }) {
           low
             ? declared.length
               ? `Reduced clock, reported reason: ${declared.join(", ")}.`
-              : "Clocked well below its ceiling under load with no throttle reason reported — see Alerts."
+              : `Clocked well below its ceiling under load with no throttle reason reported — see Alerts.${
+                  lifetime.length ? ` The driver's lifetime counters show: ${lifetime.join(", ")}.` : ""
+                }`
             : max
-              ? `${pct!.toFixed(0)}% of the ${max} MHz ceiling.`
+              ? `${pct!.toFixed(0)}% of the ${max} MHz ceiling.${
+                  lifetime.length ? ` Lifetime clock events: ${lifetime.join(", ")}.` : ""
+                }`
               : ""
         }
       >

@@ -22,6 +22,7 @@ import {
   parseGpuGraphics,
   parseGpuProcs,
   parseGpuQuery,
+  parseClockEventCounters,
   parseHwmon,
   parseIpAddr,
   parseMeminfo,
@@ -108,6 +109,36 @@ describe("GPU", () => {
     expect(g.powerLimitW).toBeNull();
     expect(g.memTotalBytes).toBeNull();
     expect(g.memUsedBytes).toBeNull();
+  });
+
+  test("parses the standalone clock-event counter section", () => {
+    // Captured from a GB10: the four columns in the order the query names them.
+    expect(
+      parseClockEventCounters("20690301581, 29510632, 483585, 0")
+    ).toEqual({
+      swPowerCapping: 20690301581,
+      swThermalSlowdown: 29510632,
+      hwThermalSlowdown: 483585,
+      hwPowerCapping: 0, // a genuine zero, distinct from an unsupported [N/A]
+    });
+  });
+
+  test("nulls the counters when the driver does not support them", () => {
+    // An unsupported driver answers [N/A] per column...
+    expect(parseClockEventCounters("[N/A], [N/A], [N/A], [N/A]")).toBeNull();
+    // ...and a completely absent section prints nothing at all.
+    expect(parseClockEventCounters("")).toBeNull();
+    expect(parseClockEventCounters(undefined)).toBeNull();
+  });
+
+  test("keeps the counters off the main GPU row", () => {
+    /*
+     * The separation is load-bearing: nvidia-smi aborts a query and prints no
+     * row at all when any field is unsupported, so the counters live in their
+     * own section and the main GPU query keeps its original 14 columns. A row
+     * from that query must therefore carry no counters.
+     */
+    expect(parseGpuQuery(csv)[0]!.clockEventCounters).toBeNull();
   });
 
   test("parses compute apps and converts MiB", () => {

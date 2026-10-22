@@ -22,6 +22,7 @@ import {
   readMetrics,
   readOllama,
   readOpenAiModels,
+  specPosAcceptInterval,
   type EngineReading,
   type LatencyKey,
 } from "./inference.ts";
@@ -59,6 +60,7 @@ import {
   parseGpuGraphics,
   parseGpuProcs,
   parseGpuQuery,
+  parseClockEventCounters,
   parseHost,
   parseHwmon,
   parseIpAddr,
@@ -186,6 +188,14 @@ export class NodeCollector extends EventEmitter {
       specAccepted: number | undefined;
       specDrafted: number | undefined;
       specDrafts: number | undefined;
+      specPerPos: Record<number, number> | undefined;
+      mmHits: number | undefined;
+      mmQueries: number | undefined;
+      pcHits: number | undefined;
+      pcQueries: number | undefined;
+      flops: number | undefined;
+      readBytes: number | undefined;
+      writeBytes: number | undefined;
     }[]
   >();
 
@@ -704,6 +714,14 @@ export class NodeCollector extends EventEmitter {
         specAccepted: reading.specAcceptedTotal,
         specDrafted: reading.specDraftedTotal,
         specDrafts: reading.specDraftsTotal,
+        specPerPos: reading.specAcceptedPerPosTotal,
+        mmHits: reading.mmCacheHitsTotal,
+        mmQueries: reading.mmCacheQueriesTotal,
+        pcHits: reading.prefixCacheHitsTotal,
+        pcQueries: reading.prefixCacheQueriesTotal,
+        flops: reading.estimatedFlopsTotal,
+        readBytes: reading.estimatedReadBytesTotal,
+        writeBytes: reading.estimatedWriteBytesTotal,
       });
       const tokenWindowMs = throughputWindowMs(this.cfg.intervalMs ?? this.intervals.fastMs);
       while (tokens.length > 1 && ts - tokens[0]!.t > tokenWindowMs) tokens.shift();
@@ -726,8 +744,8 @@ export class NodeCollector extends EventEmitter {
        * rate of zero.
        */
       const ratio = (
-        numKey: "cached" | "specAccepted",
-        denKey: "prompt" | "specDrafted" | "specDrafts",
+        numKey: "cached" | "specAccepted" | "mmHits" | "pcHits",
+        denKey: "prompt" | "specDrafted" | "specDrafts" | "mmQueries" | "pcQueries",
         nowNum: number | undefined,
         nowDen: number | undefined
       ): number | null => counterIntervalRatio(base?.[numKey], base?.[denKey], nowNum, nowDen);
@@ -738,6 +756,25 @@ export class NodeCollector extends EventEmitter {
       const acceptRatio = ratio("specAccepted", "specDrafted", reading.specAcceptedTotal, reading.specDraftedTotal);
       const acceptedPerDraft = ratio("specAccepted", "specDrafts", reading.specAcceptedTotal, reading.specDraftsTotal);
       const cacheRatio = ratio("cached", "prompt", reading.cachedPromptTokensTotal, reading.promptTokensTotal);
+      const mmCacheRatio = ratio("mmHits", "mmQueries", reading.mmCacheHitsTotal, reading.mmCacheQueriesTotal);
+      const prefixCacheRatio = ratio("pcHits", "pcQueries", reading.prefixCacheHitsTotal, reading.prefixCacheQueriesTotal);
+
+      /*
+       * Per-position speculative acceptance: each draft position's accepted
+       * tokens over the window, divided by the draft steps in the same window.
+       * A weak later position shows up as a low rate even though the overall
+       * rate looks healthy.
+       */
+      const perPosAccept = specPosAcceptInterval(
+        base?.specPerPos,
+        reading.specAcceptedPerPosTotal,
+        base?.specDrafts,
+        reading.specDraftsTotal
+      );
+
+      const flopsRate = rate(base?.flops, reading.estimatedFlopsTotal, base?.t);
+      const readBytesRate = rate(base?.readBytes, reading.estimatedReadBytesTotal, base?.t);
+      const writeBytesRate = rate(base?.writeBytes, reading.estimatedWriteBytesTotal, base?.t);
 
       const genRate = rate(base?.gen, gen, base?.t) ?? rate(prev?.gen.value, gen, prev?.gen.t);
       const promptRate = rate(base?.prompt, prompt, base?.t) ?? rate(prev?.prompt.value, prompt, prev?.prompt.t);
@@ -862,6 +899,12 @@ export class NodeCollector extends EventEmitter {
         queueLatencyMs: queueMs,
         prefillMs,
         decodeMs,
+        specPerPosAcceptPct: perPosAccept,
+        mmCacheHitPct: round(pct(mmCacheRatio), 1),
+        prefixCacheHitPct: round(pct(prefixCacheRatio), 1),
+        estimatedFlopsPerSec: flopsRate,
+        estimatedReadBytesPerSec: readBytesRate,
+        estimatedWriteBytesPerSec: writeBytesRate,
         ...(container ? { containerName: container.name } : {}),
       });
     }
@@ -940,6 +983,7 @@ export class NodeCollector extends EventEmitter {
       smClockMhz: g.smClockMhz,
       smClockMaxMhz: g.smClockMaxMhz,
       throttleReasons: g.throttleReasons,
+      clockEventCounters: parseClockEventCounters(s.gpuclock),
       vramTotalBytes,
       vramUsedBytes,
       vramUsedIsDerived: derived,
@@ -1218,6 +1262,12 @@ function emptyEndpoint(nodeId: string, nodeLabel: string, port: number): Inferen
     queueLatencyMs: null,
     prefillMs: null,
     decodeMs: null,
+    specPerPosAcceptPct: null,
+    mmCacheHitPct: null,
+    prefixCacheHitPct: null,
+    estimatedFlopsPerSec: null,
+    estimatedReadBytesPerSec: null,
+    estimatedWriteBytesPerSec: null,
   };
 }
 

@@ -398,6 +398,16 @@ function ClusterCharts({
         key: "power", title: "GPU power", unit: "W", series: build("power"),
         fmt: (v: number) => `${v.toFixed(1)} W`, tick: (v: number) => `${v.toFixed(0)}`, min: 40,
       },
+      /*
+       * SM clock against the part's ceiling. Placed here because it is the one
+       * series that exposes a GB10 pinned low by the power-delivery fault: every
+       * other panel stays healthy while the clock sits at ~82% of max, so a flat
+       * line here is the signal, not a spike.
+       */
+      {
+        key: "clock", title: "SM clock", unit: "MHz", series: build("clock"),
+        fmt: (v: number) => `${v.toFixed(0)} MHz`, tick: (v: number) => `${v.toFixed(0)}`, min: 1000,
+      },
     ];
   }, [history, snap.nodes]);
 

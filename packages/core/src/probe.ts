@@ -110,6 +110,9 @@ grep -h . /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq 2>/dev/null
 S gpu
 nvidia-smi --query-gpu=index,name,uuid,driver_version,utilization.gpu,utilization.memory,temperature.gpu,power.draw,power.limit,clocks.current.sm,memory.total,memory.used,clocks.max.sm,clocks_throttle_reasons.active --format=csv,noheader,nounits 2>/dev/null
 
+S gpuclock
+nvidia-smi --query-gpu=clocks_event_reasons_counters.sw_power_cap,clocks_event_reasons_counters.sw_thermal_slowdown,clocks_event_reasons_counters.hw_thermal_slowdown,clocks_event_reasons_counters.hw_power_brake_slowdown --format=csv,noheader,nounits 2>/dev/null
+
 S gpuprocs
 GPUAPPS=\$(nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv,noheader,nounits 2>/dev/null)
 printf '%s\\n' "\$GPUAPPS"

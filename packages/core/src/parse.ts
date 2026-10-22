@@ -9,7 +9,6 @@
 
 import { RS, US } from "./probe.ts";
 import type {
-  CpuMetrics,
   DiskMetrics,
   DockerContainer,
   DistributedHints,
@@ -184,6 +183,20 @@ export interface RawGpu {
   memUsedBytes: number | null;
   smClockMaxMhz: number | null;
   throttleReasons: { mask: string; reasons: string[] } | null;
+  /**
+   * Cumulative driver count for each clock event, from the separate
+   * `clocks_event_reasons_counters.*` probe section. Held apart from the main
+   * GPU query on purpose: nvidia-smi aborts the whole query and prints no row
+   * at all if any requested field is unsupported, so appending these columns to
+   * the main query would cost every GPU metric on a part whose driver lacks
+   * them. Kept on its own, an unsupported driver merely loses the counters.
+   */
+  clockEventCounters: {
+    swPowerCapping: number | null;
+    swThermalSlowdown: number | null;
+    hwThermalSlowdown: number | null;
+    hwPowerCapping: number | null;
+  } | null;
 }
 
 /**
@@ -249,9 +262,37 @@ export function parseGpuQuery(body: string | undefined): RawGpu[] {
        * interesting case: nothing is claiming responsibility.
        */
       throttleReasons: parseThrottleMask(f[13]),
+      clockEventCounters: null,
     });
   }
   return out;
+}
+
+/**
+ * Parse the standalone `clocks_event_reasons_counters.*` probe body.
+ *
+ * Fixed column order: `sw_power_cap, sw_thermal_slowdown, hw_thermal_slowdown,
+ * hw_power_brake_slowdown`. Each is a cumulative driver count whose unit the
+ * driver does not document, so the values are carried verbatim; a nonzero value
+ * means the event has occurred. A driver that does not support any of the four
+ * returns `[N/A]` per column and a driver that does not support the query at all
+ * prints nothing, both of which decode to null.
+ */
+export function parseClockEventCounters(body: string | undefined): {
+  swPowerCapping: number | null;
+  swThermalSlowdown: number | null;
+  hwThermalSlowdown: number | null;
+  hwPowerCapping: number | null;
+} | null {
+  const f = lines(body)[0]?.split(",").map((s) => s.trim());
+  if (!f || f.length < 4) return null;
+  const c = {
+    swPowerCapping: nvidiaNum(f[0]),
+    swThermalSlowdown: nvidiaNum(f[1]),
+    hwThermalSlowdown: nvidiaNum(f[2]),
+    hwPowerCapping: nvidiaNum(f[3]),
+  };
+  return Object.values(c).every((v) => v === null) ? null : c;
 }
 
 /** `pid, process_name, used_memory` from --query-compute-apps. */

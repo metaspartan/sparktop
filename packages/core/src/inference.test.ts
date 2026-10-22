@@ -15,6 +15,7 @@ import {
   readMetrics,
   readOllama,
   readOpenAiModels,
+  specPosAcceptInterval,
 } from "./inference.ts";
 import { parseDiscoveredEndpoints, parseInferenceScrapes } from "./parse.ts";
 import { US } from "./probe.ts";
@@ -207,6 +208,44 @@ describe("counter interval ratios", () => {
   });
 });
 
+describe("vLLM extended cache and spec-decode counters", () => {
+  /*
+   * The newer vLLM builds expose a per-position speculative-decode counter and
+   * a per-request prefix-cache hit pair. The positions are keyed by a label, so
+   * the value that comes back is a map, not a scalar — and routing a map through
+   * the scalar setter (which tests Number.isFinite) drops it silently. That is
+   * the regression this pins.
+   */
+  const body = `vllm:num_requests_running 1
+vllm:spec_decode_num_accepted_tokens_per_pos_total{position="0"} 100
+vllm:spec_decode_num_accepted_tokens_per_pos_total{position="1"} 60
+vllm:spec_decode_num_accepted_tokens_per_pos_total{position="2"} 30
+vllm:mm_cache_hits_total 377
+vllm:mm_cache_queries_total 430
+vllm:prefix_cache_hits_total 900
+vllm:prefix_cache_queries_total 1000`;
+
+  test("keeps the per-position acceptance map rather than dropping it", () => {
+    const r = readMetrics(body)!;
+    expect(r.specAcceptedPerPosTotal).toEqual({ 0: 100, 1: 60, 2: 30 });
+  });
+
+  test("reads the per-request prefix and multimodal cache counters", () => {
+    const r = readMetrics(body)!;
+    expect(r.prefixCacheHitsTotal).toBe(900);
+    expect(r.prefixCacheQueriesTotal).toBe(1000);
+    expect(r.mmCacheHitsTotal).toBe(377);
+    expect(r.mmCacheQueriesTotal).toBe(430);
+  });
+
+  test("leaves the new fields absent on an engine that does not report them", () => {
+    const r = readMetrics(`llamacpp:requests_processing 1`)!;
+    expect(r.specAcceptedPerPosTotal).toBeUndefined();
+    expect(r.prefixCacheHitsTotal).toBeUndefined();
+    expect(r.mmCacheHitsTotal).toBeUndefined();
+  });
+});
+
 describe("token accounting across engines", () => {
   /*
    * The token chart is engine-neutral, so every supported engine has to yield
@@ -249,5 +288,60 @@ tgi_request_generated_tokens_sum 300`,
     // cache served nothing.
     expect(readMetrics(bodies.llamacpp!)!.cachedPromptTokensTotal).toBeUndefined();
     expect(readMetrics(bodies.tgi!)!.cachedPromptTokensTotal).toBeUndefined();
+  });
+});
+
+describe("per-position speculative acceptance", () => {
+  /*
+   * Draft steps, not drafted tokens, are the denominator: a draft step proposes
+   * one token at every position, so the step count is each position's
+   * opportunity count. These are the real counters read from a GB10 running
+   * num_speculative_tokens=3, where draft tokens are exactly three times the
+   * draft steps (251613 steps, 754784 drafted tokens over the same lifetime).
+   */
+  const drafts = 251613;
+  const draftedTokens = 754784;
+  const accepted = { 0: 189579, 1: 143246, 2: 109752 };
+
+  test("divides by draft steps, not drafted tokens", () => {
+    const rates = specPosAcceptInterval({ 0: 0, 1: 0, 2: 0 }, accepted, 0, drafts)!;
+    // 189579 / 251613 = 75.3%, the acceptance rate position 0 actually achieves.
+    expect(rates[0]).toBeCloseTo(75.3, 1);
+    expect(rates[1]).toBeCloseTo(56.9, 1);
+    expect(rates[2]).toBeCloseTo(43.6, 1);
+  });
+
+  test("the buggy denominator understates every position threefold", () => {
+    // The regression this guards: dividing by drafted tokens would report the
+    // same counters as 25.1 / 19.0 / 14.5, understating a healthy first position
+    // badly enough to look like speculative decoding is not paying off.
+    const rates = specPosAcceptInterval({ 0: 0, 1: 0, 2: 0 }, accepted, 0, drafts)!;
+    const buggy = accepted[0]! / draftedTokens;
+    expect(buggy).toBeCloseTo(0.251, 3);
+    expect(rates[0]! / 100 / buggy).toBeCloseTo(3, 1);
+  });
+
+  test("gives the windowed rate, not the lifetime rate", () => {
+    const rates = specPosAcceptInterval(
+      { 0: 100000, 1: 80000, 2: 60000 },
+      { 0: 101890, 1: 81810, 2: 61800 },
+      200000,
+      201000
+    )!;
+    // 1890 accepted at position 0 over 1000 steps in the window.
+    expect(rates[0]).toBeCloseTo(189, 1);
+  });
+
+  test("is null without a baseline, positions, or any drafts", () => {
+    expect(specPosAcceptInterval(undefined, accepted, 0, drafts)).toBeNull();
+    expect(specPosAcceptInterval({ 0: 0 }, undefined, 0, drafts)).toBeNull();
+    expect(specPosAcceptInterval({ 0: 0 }, accepted, 100, 100)).toBeNull();
+    expect(specPosAcceptInterval({ 0: 0 }, accepted, undefined, undefined)).toBeNull();
+  });
+
+  test("tolerates a position that only appears after the baseline", () => {
+    const rates = specPosAcceptInterval({ 0: 0 }, { 0: 189579, 1: 143246 }, 0, drafts)!;
+    expect(rates).toHaveLength(2);
+    expect(rates[1]).toBeCloseTo(56.9, 1);
   });
 });

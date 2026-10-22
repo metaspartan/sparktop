@@ -499,6 +499,7 @@ describe("GB10 low-clock detection", () => {
     name: "NVIDIA GB10", uuid: "u", driverVersion: "580", cudaVersion: "13", unifiedMemory: true,
     utilPct: 96, memUtilPct: null, temperatureC: 61, powerDrawW: 92, powerLimitW: null,
     smClockMhz: 2405, smClockMaxMhz: 3003, throttleReasons: { mask: "0x0", reasons: [] },
+    clockEventCounters: null,
     vramTotalBytes: 122e9, vramUsedBytes: 40e9, vramUsedIsDerived: true, processes: [],
     ...over,
   });

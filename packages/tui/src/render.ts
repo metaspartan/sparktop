@@ -124,7 +124,7 @@ export function render(snap: ClusterSnapshot | null, st: RenderState): string[] 
 
   switch (st.view) {
     case "fabric":
-      lines.push(...fabricView(snap, st, W));
+      lines.push(...fabricView(snap, W));
       break;
     case "processes":
       lines.push(...processView(nodes, W));
@@ -579,7 +579,7 @@ function linkLine(l: FabricLink, W: number): string[] {
   ];
 }
 
-function fabricView(snap: ClusterSnapshot, st: RenderState, W: number): string[] {
+function fabricView(snap: ClusterSnapshot, W: number): string[] {
   const I = W - 4;
   const out: string[] = [];
   const links: string[] = [];

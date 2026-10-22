@@ -587,6 +587,32 @@ function EndpointRow({ e }: { e: InferenceEndpoint }) {
         </div>
       )}
 
+      {/*
+        Per-position acceptance, when the engine reports it. The aggregate rate
+        says speculative decoding works; this says which draft position stops
+        earning its keep, which is the number that justifies lowering
+        num_speculative_tokens rather than guessing at it.
+      */}
+      {e.specPerPosAcceptPct?.length ? (
+        <div className="mt-1.5">
+          <div className="mb-0.5 text-[11px] text-ink-muted">Acceptance by draft position</div>
+          <div className="flex flex-wrap items-end gap-x-3 gap-y-1">
+            {e.specPerPosAcceptPct.map((p, i) => (
+              <span
+                key={i}
+                className="cursor-help"
+                title={`Position ${i}: share of draft attempts at this position the target model accepted. A drop here means later draft positions cost more than they return.`}
+              >
+                <Meter value={p ?? 0} tone={utilTone(p ?? 0)} className="w-12" />
+                <span className="tnum mt-0.5 block text-[10px] text-ink-secondary">
+                  #{i} {p === null ? "—" : `${p.toFixed(0)}%`}
+                </span>
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
       {e.promptCacheHitPct !== null && (
         <div className="mt-1.5 flex items-center gap-2">
           <span
@@ -598,6 +624,42 @@ function EndpointRow({ e }: { e: InferenceEndpoint }) {
           <Meter value={e.promptCacheHitPct} tone="series-3" className="flex-1" />
           <span className="tnum w-10 shrink-0 text-right text-[11px] text-ink-secondary">
             {e.promptCacheHitPct.toFixed(0)}%
+          </span>
+        </div>
+      )}
+
+      {/*
+        The newer vLLM pair reports the per-request prefix-cache rate directly,
+        which differs from the token-share figure above: a single huge reused
+        prompt can dominate the token share without most requests hitting cache.
+        Shown only when the engine emits it.
+      */}
+      {e.prefixCacheHitPct !== null && (
+        <div className="mt-1.5 flex items-center gap-2">
+          <span
+            className="w-16 shrink-0 cursor-help text-[11px] text-ink-muted"
+            title="Per-request prefix-cache hit rate: hits divided by queries. Distinct from the token-share figure, which a few large reused prompts can inflate."
+          >
+            Cache req
+          </span>
+          <Meter value={e.prefixCacheHitPct} tone="series-2" className="flex-1" />
+          <span className="tnum w-10 shrink-0 text-right text-[11px] text-ink-secondary">
+            {e.prefixCacheHitPct.toFixed(0)}%
+          </span>
+        </div>
+      )}
+
+      {e.mmCacheHitPct !== null && (
+        <div className="mt-1.5 flex items-center gap-2">
+          <span
+            className="w-16 shrink-0 cursor-help text-[11px] text-ink-muted"
+            title="Multimodal (image) cache hit rate. A vision model re-encodes every image unless the encoder output is cached; a high rate means repeated images are not paying that cost again."
+          >
+            Image hit
+          </span>
+          <Meter value={e.mmCacheHitPct} tone="series-3" className="flex-1" />
+          <span className="tnum w-10 shrink-0 text-right text-[11px] text-ink-secondary">
+            {e.mmCacheHitPct.toFixed(0)}%
           </span>
         </div>
       )}

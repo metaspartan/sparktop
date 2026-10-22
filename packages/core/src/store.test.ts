@@ -53,6 +53,12 @@ function endpoint(over: Partial<InferenceEndpoint> = {}): InferenceEndpoint {
     queueLatencyMs: null,
     prefillMs: null,
     decodeMs: null,
+    specPerPosAcceptPct: null,
+    mmCacheHitPct: null,
+    prefixCacheHitPct: null,
+    estimatedFlopsPerSec: null,
+    estimatedReadBytesPerSec: null,
+    estimatedWriteBytesPerSec: null,
     ...merged,
   };
 }
