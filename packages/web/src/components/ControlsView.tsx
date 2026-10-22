@@ -211,6 +211,9 @@ function NodeControls({
 }) {
   const [target, setTarget] = useState<string | null>(null);
   const [image, setImage] = useState("");
+  // Stopped containers are rarely what you came to act on, and a long tail of
+  // them is most of this panel's height. Hidden until asked for.
+  const [showStopped, setShowStopped] = useState(false);
 
   if (node.status !== "online") {
     return (
@@ -230,6 +233,9 @@ function NodeControls({
   const containers = [...node.docker.containers].sort(
     (a, b) => Number(b.state === "running") - Number(a.state === "running") || a.name.localeCompare(b.name)
   );
+  const runningCount = containers.filter((c) => c.state === "running").length;
+  const stoppedCount = containers.length - runningCount;
+  const shown = showStopped ? containers : containers.filter((c) => c.state === "running");
 
   return (
     <Card
@@ -239,14 +245,29 @@ function NodeControls({
           <span className="text-[11px] font-normal text-ink-muted">{node.host}</span>
         </span>
       }
-      right={<span className="text-[11px] text-ink-muted">{containers.length} containers</span>}
+      right={
+        stoppedCount > 0 ? (
+          <button
+            onClick={() => setShowStopped((v) => !v)}
+            className="cursor-pointer rounded-md px-1.5 py-0.5 text-[11px] text-ink-muted transition-colors hover:bg-surface-hover hover:text-ink"
+          >
+            {runningCount} running · {showStopped ? "hide" : "show"} {stoppedCount} stopped
+          </button>
+        ) : (
+          <span className="text-[11px] text-ink-muted">{runningCount} running</span>
+        )
+      }
       bodyClass="p-0"
     >
-      {containers.length === 0 && <p className="px-4 py-3 text-[12px] text-ink-muted">No containers.</p>}
+      {shown.length === 0 && (
+        <p className="px-4 py-3 text-[12px] text-ink-muted">
+          {containers.length === 0 ? "No containers." : "Nothing running."}
+        </p>
+      )}
 
-      <ul className="divide-y divide-[color:var(--border)]">
-        {containers.map((c) => (
-          <li key={c.id} className="px-4 py-2.5">
+      <ul className="max-h-[420px] divide-y divide-[color:var(--border)] overflow-y-auto">
+        {shown.map((c) => (
+          <li key={c.id} className="px-4 py-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex min-w-0 items-center gap-2">
                 <span

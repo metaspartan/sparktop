@@ -130,7 +130,12 @@ export function TimeChart({
           stroke: muted,
           grid: { stroke: gridColor, width: 1 },
           ticks: { show: false },
-          size: axisWidth(ticks, minRange),
+          // Sized from the labels actually drawn, so a large value ("300.0M")
+          // is never clipped on its left edge. uPlot calls this on each redraw.
+          size: (_u, values) =>
+            values?.length
+              ? Math.min(80, Math.max(30, Math.max(...values.map((v) => String(v).length)) * 6.6 + 14))
+              : axisWidth(ticks, minRange),
           gap: 6,
           font: "11px system-ui, sans-serif",
           values: (_u, splits) => splits.map((v) => ticks(v)),

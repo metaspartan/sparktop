@@ -1,10 +1,10 @@
-import { useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { fmtBytes, fmtGbps, fmtPct, fmtTemp, fmtWatts, pctOf, shortImage } from "@sparktop/core";
 import type { ClusterSnapshot, ClusterWarning, DistributedJob, HistoryPayload } from "@sparktop/core";
 import { useCluster } from "./lib/useCluster";
 import { useTheme } from "./lib/theme";
 import { SECTIONS, useLayout, type SectionId } from "./lib/useLayout";
-import { Badge, Card, DensityContext, LegendItem, Meter, utilTone } from "./components/primitives";
+import { Badge, Card, DensityContext, LegendItem, Meter, tempTone, utilTone } from "./components/primitives";
 import { Sortable } from "./components/Sortable";
 import { Settings } from "./components/Settings";
 import { Setup } from "./components/Setup";
@@ -14,6 +14,8 @@ import { ThroughputHero } from "./components/ThroughputHero";
 import { ControlsView } from "./components/ControlsView";
 import { RunsView } from "./components/RunsView";
 import { NodeCard } from "./components/NodeCard";
+import { NodeTile } from "./components/Compact";
+import { Icon, type IconName } from "./components/Icon";
 import { TimeChart, type ChartSeries } from "./components/TimeChart";
 
 export default function App() {
@@ -21,16 +23,17 @@ export default function App() {
   const { choice, resolved, setChoice } = useTheme();
   const layout = useLayout();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [openNode, setOpenNode] = useState<string | null>(null);
 
-  const gap = layout.density === "compact" ? "gap-2.5" : "gap-4";
+  const gap = layout.density === "compact" ? "gap-2" : "gap-3";
 
   const sections: Record<SectionId, React.ReactNode> = {
     // Two columns is the widest that still leaves a node card room for its
     // process and container tables at the 1800px container cap.
     nodes: snapshot && (
-      <div className={`grid ${gap} xl:grid-cols-2`}>
-        {snapshot.nodes.map((n, i) => (
-          <NodeCard key={n.id} node={n} history={history} themeKey={resolved} seriesIndex={i} />
+      <div className={`grid ${gap} lg:grid-cols-2`}>
+        {snapshot.nodes.map((n) => (
+          <NodeTile key={n.id} node={n} history={history} onOpen={() => setOpenNode(n.id)} />
         ))}
       </div>
     ),
@@ -64,7 +67,7 @@ export default function App() {
           onOpenSettings={() => setSettingsOpen(true)}
         />
 
-        <main className={`mx-auto flex max-w-[1800px] flex-col ${gap} px-4 pb-16 pt-3 xl:pl-10`}>
+        <main className={`mx-auto flex max-w-[1680px] flex-col ${gap} px-3 pb-10 pt-3 sm:px-4 xl:pl-10`}>
           {!snapshot ? (
             <LoadingSkeleton label={conn === "open" ? "Waiting for the first snapshot…" : "Connecting to sparktop server…"} />
           ) : snapshot.nodes.length === 0 ? (
@@ -91,6 +94,16 @@ export default function App() {
         {/* Alerts float above the page instead of occupying a slot in it, so a
             fault appearing or clearing never moves the dashboard underneath. */}
         {snapshot && snapshot.warnings.length > 0 && <AlertToasts warnings={snapshot.warnings} />}
+
+        {openNode && snapshot && (() => {
+          const i = snapshot.nodes.findIndex((n) => n.id === openNode);
+          const n = snapshot.nodes[i];
+          return n ? (
+            <Drawer onClose={() => setOpenNode(null)} title={n.info.hostname || n.label}>
+              <NodeCard node={n} history={history} themeKey={resolved} seriesIndex={i} />
+            </Drawer>
+          ) : null;
+        })()}
 
         <Settings
           open={settingsOpen}
@@ -161,7 +174,7 @@ function Header({
               boxShadow: "var(--glow-accent)",
             }}
           >
-            ⚡
+            <Icon name="bolt" size={14} strokeWidth={2.2} />
           </span>
           <span>
             spark<span style={{ color: "var(--accent)" }}>top</span>
@@ -198,7 +211,7 @@ function Header({
             aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
             title={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
           >
-            {theme === "dark" ? "☀" : "☾"}
+            <Icon name={theme === "dark" ? "sun" : "moon"} size={15} />
           </button>
 
           <button
@@ -207,7 +220,7 @@ function Header({
             aria-label="Open settings"
             title="Settings and layout"
           >
-            ⚙
+            <Icon name="settings" size={15} />
           </button>
         </div>
       </div>
@@ -217,74 +230,44 @@ function Header({
 
 /** Compact cluster roll-up. Every figure is tabular so nothing jitters. */
 function SummaryStrip({ snap }: { snap: ClusterSnapshot }) {
+  /*
+   * Cluster health at a glance, as icon pills. Throughput lives in the hero
+   * directly below, so the header no longer repeats it: it carries only what
+   * the hero does not, and it fits one line at laptop width.
+   */
   const t = snap.totals;
   const vramPct = pctOf(t.vramUsedBytes, t.vramTotalBytes);
-  /*
-   * A single Spark has ports but no interconnect, so a fabric figure would read
-   * "0 Gbps of 0 Gbps" — a measurement of something that does not exist. The
-   * slot is given to whatever is actually informative for that setup instead.
-   */
   const hasFabric = snap.fabric.totalCapacityGbps > 0;
-  const items: { label: string; value: string; sub?: string; pct?: number; tone?: "series-3" | "accent" | "warning" | "critical" }[] = [
+  const tone = (p: number | null) => `var(--${{ accent: "accent", warning: "status-warning", critical: "status-critical", "series-3": "series-3" }[utilTone(p ?? 0)]})`;
+  const pills: { icon: IconName; label: string; value: string; pct?: number | null; color?: string; title: string }[] = [
+    { icon: "server", label: "Nodes", value: `${t.nodesOnline}/${t.nodes}`, color: t.nodesOnline === t.nodes ? "var(--status-good)" : "var(--status-critical)", title: `${t.nodesOnline} of ${t.nodes} nodes online` },
+    { icon: "memory", label: "VRAM", value: fmtBytes(t.vramUsedBytes), pct: vramPct, color: tone(vramPct), title: `${fmtBytes(t.vramUsedBytes)} of ${fmtBytes(t.vramTotalBytes)}` },
+    { icon: "cpu", label: "CPU", value: fmtPct(t.cpuUsagePct, 0), pct: t.cpuUsagePct, color: tone(t.cpuUsagePct), title: `${t.cpuCores} cores` },
+    { icon: "power", label: "Power", value: fmtWatts(t.powerDrawW), title: "GPU power draw, all nodes" },
+    { icon: "thermo", label: "Peak", value: fmtTemp(t.maxTempC), color: `var(--${({ accent: "text-secondary", warning: "status-warning", critical: "status-critical" } as Record<string, string>)[tempTone(t.maxTempC)] ?? "text-secondary"})`, title: "Hottest sensor in the cluster" },
     ...(hasFabric
-      ? [{
-          label: "Fabric",
-          value: fmtGbps(snap.fabric.totalTrafficGbps),
-          sub: `of ${snap.fabric.totalCapacityGbps.toFixed(0)} Gbps`,
-          pct: pctOf(snap.fabric.totalTrafficGbps, snap.fabric.totalCapacityGbps),
-          tone: "series-3" as const,
-        }]
+      ? [{ icon: "link" as IconName, label: "Fabric", value: fmtGbps(snap.fabric.totalTrafficGbps), pct: pctOf(snap.fabric.totalTrafficGbps, snap.fabric.totalCapacityGbps), color: "var(--series-3)", title: `of ${snap.fabric.totalCapacityGbps.toFixed(0)} Gbps capacity` }]
       : []),
-    { label: "VRAM", value: fmtBytes(t.vramUsedBytes), sub: `of ${fmtBytes(t.vramTotalBytes)}`, pct: vramPct, tone: utilTone(vramPct) },
-    { label: "CPU", value: fmtPct(t.cpuUsagePct, 0), sub: `${t.cpuCores} cores`, pct: t.cpuUsagePct, tone: utilTone(t.cpuUsagePct) },
-    { label: "Temp", value: fmtTemp(t.maxTempC), sub: "peak" },
-    { label: "Power", value: fmtWatts(t.powerDrawW), sub: "GPU" },
-    ...(t.inferenceEndpoints > 0
-      ? [
-          /*
-           * Per-request rate leads, aggregate follows. The header is the first
-           * thing on screen and it should carry the number that matches what a
-           * caller experiences, not the fleet total that rises with batching.
-           */
-          ...(t.perRequestTokensPerSec !== null
-            ? [{
-                label: "Per request",
-                value: `${t.perRequestTokensPerSec}`,
-                sub: "tok/s decode",
-              }]
-            : []),
-          {
-            label: "Tokens",
-            value: `${t.tokensPerSec}/s`,
-            sub: `${t.requestsRunning} running${t.requestsWaiting ? ` · ${t.requestsWaiting} queued` : ""}`,
-          },
-        ]
-      : []),
-    { label: "Nodes", value: `${t.nodesOnline}/${t.nodes}`, sub: `${t.containers} containers` },
+    { icon: "box", label: "Containers", value: `${t.containers}`, title: "Running containers, all nodes" },
   ];
-
   return (
-    /*
-     * Centred between the wordmark and the actions on wide screens; a plain
-     * wrapping row on narrow ones. Placement is owned by the header, so this
-     * only decides how the figures sit relative to each other.
-     */
-    <div className="no-scrollbar flex flex-nowrap items-center gap-x-6 overflow-x-auto lg:[justify-content:safe_center]">
-      {items.map((i) => (
-        <div key={i.label} className="w-[112px] flex-none lg:w-[118px]">
-          <div className="flex items-baseline gap-2">
-            <span className="text-[10px] uppercase tracking-wide text-ink-muted">{i.label}</span>
-            <span className="tnum text-[14px] font-semibold leading-none text-ink">{i.value}</span>
-          </div>
-          {/* The label reads; the meter decorates. Give the text the room it
-              needs first and let the bar take what is left, rather than
-              splitting the cell evenly and eliding both. */}
-          <div className="mt-0.5 flex items-center gap-2">
-            <span className="flex-none text-[10px] text-ink-muted">{i.sub}</span>
-            {i.pct !== undefined && (
-              <Meter value={i.pct} tone={i.tone ?? "accent"} className="min-w-0 flex-1" />
-            )}
-          </div>
+    <div className="no-scrollbar flex flex-nowrap items-center gap-1.5 overflow-x-auto lg:[justify-content:safe_center]">
+      {pills.map((p) => (
+        <div
+          key={p.label}
+          title={`${p.label}: ${p.title}`}
+          className="relative flex flex-none items-center gap-1.5 overflow-hidden rounded-full border border-edge bg-surface-2/50 py-1 pl-2 pr-2.5"
+        >
+          <Icon name={p.icon} size={13} style={{ color: p.color ?? "var(--text-muted)" }} />
+          <span className="hidden text-[10.5px] text-ink-muted xl:inline">{p.label}</span>
+          <span className="tnum text-[12px] font-semibold text-ink">{p.value}</span>
+          {p.pct != null && (
+            <span
+              aria-hidden
+              className="absolute bottom-0 left-0 h-[2px] rounded-full transition-[width] duration-700"
+              style={{ width: `${Math.min(100, p.pct)}%`, background: p.color }}
+            />
+          )}
         </div>
       ))}
     </div>
@@ -434,7 +417,7 @@ function ClusterCharts({
   const ts = history?.ts ?? [];
 
   return (
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       {panels.map((p) => (
         <Card
           key={p.key}
@@ -460,7 +443,7 @@ function ClusterCharts({
             <TimeChart
               ts={ts}
               series={p.series}
-              height={132}
+              height={112}
               format={p.fmt}
               tickFormat={p.tick}
               minRange={p.min}
@@ -504,6 +487,36 @@ function LoadingSkeleton({ label }: { label: string }) {
         <div className="skeleton h-[320px]" />
       </div>
       <p className="text-center text-[12px] text-ink-muted">{label}</p>
+    </div>
+  );
+}
+
+
+/**
+ * Right-hand drawer for node detail.
+ *
+ * The overview shows every node as a compact tile; the full card with its
+ * process and container tables opens here, so looking at one node never
+ * pushes the others off screen. Escape and the scrim both close it.
+ */
+function Drawer({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div className="fixed inset-0 z-40 flex justify-end" role="dialog" aria-modal="true" aria-label={title}>
+      <button aria-label="Close" onClick={onClose} className="drawer-scrim absolute inset-0 cursor-default bg-black/45 backdrop-blur-[2px]" />
+      <div className="drawer-panel relative flex h-full w-full max-w-[920px] flex-col overflow-y-auto border-l border-edge bg-surface-0 p-3 shadow-2xl">
+        <div className="mb-2 flex items-center justify-between px-1">
+          <span className="text-[13px] font-semibold text-ink">{title}</span>
+          <button onClick={onClose} className="cursor-pointer rounded-lg border border-edge px-2 py-1 text-[11px] text-ink-secondary hover:text-ink">
+            Close <kbd className="ml-1 text-ink-muted">Esc</kbd>
+          </button>
+        </div>
+        {children}
+      </div>
     </div>
   );
 }

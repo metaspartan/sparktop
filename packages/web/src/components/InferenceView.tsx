@@ -76,7 +76,7 @@ export function InferenceView({ nodes, history, themeKey }: Props) {
   const cumulativeOut = endpoints.reduce((a, e) => a + (e.generationTokensTotal ?? 0), 0);
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+    <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
       <Card
         title="Inference"
         right={
@@ -117,38 +117,6 @@ export function InferenceView({ nodes, history, themeKey }: Props) {
             <EndpointRow key={e.id} e={e} />
           ))}
         </ul>
-      </Card>
-
-      <Card
-        fill
-        title="Token throughput"
-        right={
-          series.length > 1 ? (
-            <div className="flex flex-wrap gap-2.5">
-              {series.map((s) => (
-                <LegendItem key={s.label} colorVar={s.colorVar} label={s.label} />
-              ))}
-            </div>
-          ) : null
-        }
-      >
-        {ts.length > 1 ? (
-          <TimeChart
-            ts={ts}
-            series={series}
-            grow
-            minHeight={172}
-            format={(v) => `${v.toFixed(1)} tok/s`}
-            tickFormat={(v) => v.toFixed(0)}
-            minRange={10}
-            fill={series.length === 1}
-            themeKey={themeKey}
-          />
-        ) : (
-          <div className="flex h-full min-h-[172px] items-center justify-center text-[11px] text-ink-muted">
-            Collecting…
-          </div>
-        )}
       </Card>
 
       <TokenHistoryCard
@@ -337,7 +305,7 @@ function TokenHistoryCard({
 
   return (
     <Card
-      className="lg:col-span-2"
+      
       title="Input and output tokens"
       right={
         <div className="flex items-center gap-3">
@@ -370,7 +338,10 @@ function TokenHistoryCard({
         <>
           {/* The window's totals, so the chart has a headline the way a
               cumulative plot used to give for free. */}
-          <div className="mb-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <div
+            className="mb-2 flex flex-wrap items-baseline gap-x-3 gap-y-1"
+            title="Tokens produced in each interval, so idle reads as zero and a burst stands up. Cached input is the part of the prompt a prefix cache served instead of the model; the gap below Input is what was actually computed."
+          >
             <span className="tnum text-[18px] font-semibold text-ink">
               {compactTokens(windowTotals.out + windowTotals.in)}
             </span>
@@ -392,19 +363,12 @@ function TokenHistoryCard({
           <TimeChart
             ts={shown!.ts}
             series={shown!.series}
-            height={168}
+            height={150}
             format={(v) => `${compactTokens(v)} tokens`}
             tickFormat={(v) => compactTokens(v)}
             minRange={100}
             themeKey={`${themeKey}:${range}`}
           />
-          <p className="mt-2 text-[11px] leading-relaxed text-ink-muted">
-            Tokens produced in each interval, so idle reads as zero and a burst stands up — a running
-            total would climb whatever was happening. <b>Cached input</b> is the part of the prompt a
-            prefix cache served instead of a model, so the gap below <b>Input</b> is what was actually
-            computed. An engine restart contributes nothing rather than a spike downwards.
-            {days > 0 && " Stored samples are written once a minute, so each point is a minute of work."}
-          </p>
         </>
       ) : (
         <div className="flex h-[168px] items-center justify-center text-[11px] text-ink-muted">

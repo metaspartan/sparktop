@@ -23,6 +23,8 @@ import type { ClusterSnapshot, HistoryPayload } from "@sparktop/core";
 import { useMemo } from "react";
 import { useTween } from "../lib/useTween";
 import { Card } from "./primitives";
+import { Kpi, tail } from "./Compact";
+import { IconChip } from "./Icon";
 import { TimeChart, type ChartSeries } from "./TimeChart";
 
 interface Props {
@@ -75,7 +77,7 @@ function Gauge({
   const color = idle ? "var(--text-muted)" : "var(--accent)";
 
   return (
-    <div className="relative h-[168px] w-[168px] shrink-0">
+    <div className="relative h-[140px] w-[140px] shrink-0">
       <svg viewBox="0 0 168 168" className="h-full w-full" aria-hidden>
         <defs>
           <linearGradient id="gauge-grad" x1="0" y1="1" x2="1" y2="0">
@@ -96,7 +98,7 @@ function Gauge({
       </svg>
       <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center pt-1">
         <span
-          className="tnum text-[40px] font-semibold leading-none tracking-tight"
+          className="tnum text-[34px] font-semibold leading-none tracking-tight"
           style={{ color: idle ? "var(--text-muted)" : "var(--text-primary)" }}
         >
           {shown === null ? "—" : shown.toFixed(shown >= 100 ? 0 : 1)}
@@ -109,36 +111,7 @@ function Gauge({
   );
 }
 
-/** Large secondary figure with an animated value. */
-function Big({ label, value, unit, sub, digits = 1 }: {
-  label: string; value: number | null; unit: string; sub?: string; digits?: number;
-}) {
-  const shown = useTween(value);
-  return (
-    <div className="min-w-0">
-      <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-ink-muted">{label}</div>
-      <div className="mt-1.5 flex items-baseline gap-1.5">
-        <span className="tnum text-[30px] font-semibold leading-none tracking-tight text-ink">
-          {shown === null ? "—" : shown.toFixed(digits)}
-        </span>
-        <span className="text-[12px] font-medium text-ink-secondary">{unit}</span>
-      </div>
-      {sub && <div className="mt-1.5 truncate text-[11px] text-ink-muted">{sub}</div>}
-    </div>
-  );
-}
 
-/** Cell of the secondary strip. Fixed label height keeps every value on one baseline. */
-function Cell({ label, value, title, tone }: { label: string; value: string; title?: string; tone?: string }) {
-  return (
-    <div className="min-w-0 px-4 py-3" title={title}>
-      <div className="truncate text-[10px] font-medium uppercase tracking-[0.08em] text-ink-muted">{label}</div>
-      <div className="tnum mt-1 truncate text-[16px] font-semibold leading-tight" style={{ color: tone ?? "var(--text-primary)" }}>
-        {value}
-      </div>
-    </div>
-  );
-}
 
 /** Live/idle chip in the card header. */
 function LiveChip({ live, idle }: { live: boolean; idle: boolean }) {
@@ -187,111 +160,98 @@ export function ThroughputHero({ totals, history, themeKey }: Props) {
     { label: "Input (computed)", colorVar: "--series-4", values: history?.series["cluster:tokensComputed"] ?? [] },
   ].filter((s) => s.values.some((v) => v !== null && !Number.isNaN(v)));
 
-  const pct = (v: number | null) => (v === null ? "—" : `${v.toFixed(0)}%`);
+  const pct = (v: number | null) => (v === null ? null : v);
+  const tl = (k: string) => tail(history?.series[k]);
 
   return (
     <Card
-      title="Throughput"
+      title={
+        <span className="flex items-center gap-2">
+          <IconChip name="bolt" size={13} />
+          Throughput
+        </span>
+      }
       bodyClass="p-0"
-      right={
-        <div className="flex flex-wrap items-center gap-3">
-          {series.length > 1 && (
-            <div className="hidden flex-wrap gap-3 sm:flex">
+      right={<LiveChip live={live} idle={idle} />}
+    >
+      <div className="grid gap-3 p-3 xl:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
+        {/* Left: the instrument plus a 3x2 KPI grid. */}
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center gap-4 rounded-xl border border-edge bg-surface-2/40 px-3 py-2">
+            <Gauge value={perReq} max={gaugeMax} live={live} idle={idle} />
+            <div className="min-w-0 flex-1">
+              <div className="text-[10.5px] font-medium uppercase tracking-[0.07em] text-ink-muted">Per request</div>
+              <div className="mt-0.5 text-[13px] font-medium leading-snug text-ink">
+                {idle ? "Idle — last measured rate" : "Decode speed one request receives"}
+              </div>
+              <div className="mt-2.5 grid grid-cols-2 gap-x-4 gap-y-1.5 text-[11px]">
+                <Mini label="Peak" value={peak === null ? "—" : `${peak.toFixed(1)}`} unit="tok/s" />
+                <Mini label="Per token" value={perReq ? (1000 / perReq).toFixed(1) : "—"} unit="ms" />
+                <Mini label="Aggregate peak" value={aggPeak ? aggPeak.toFixed(0) : "—"} unit="tok/s" />
+                <Mini label="Batch" value={batch ? batch.toFixed(1) : "1"} unit="×" />
+              </div>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            <Kpi icon="activity" label="Aggregate" value={aggregate} unit="tok/s" color="var(--series-3)"
+              sub={`${totals.requestsRunning} running · ${totals.requestsWaiting} queued`} spark={tl("cluster:tokensOut")} />
+            <Kpi icon="arrowDown" label="Prefill" value={totals.promptComputedTokensPerSec} unit="tok/s" digits={0} color="var(--series-4)"
+              sub={totals.promptTokensPerSec > totals.promptComputedTokensPerSec ? `${totals.promptTokensPerSec.toFixed(0)} incl. cache` : "computed tokens"}
+              spark={tl("cluster:tokensComputed")} />
+            <Kpi icon="clock" label="Decode step" value={totals.interTokenLatencyMs} unit="ms" digits={0} color="var(--series-2)"
+              sub="per engine step" spark={tl("cluster:itl")} />
+            <Kpi icon="database" label="Prefix hit" value={pct(totals.promptCacheHitPct)} unit="%" digits={0} color="var(--series-5, var(--series-1))"
+              sub="prompt from cache" spark={tl("cluster:cacheHit")} sparkMax={100} />
+            <Kpi icon="target" label="Spec accept" value={pct(totals.specAcceptancePct)} unit="%" digits={0} color="var(--accent)"
+              sub="draft tokens kept" spark={tl("cluster:specAccept")} sparkMax={100} />
+            <Kpi icon="layers" label="Generated" value={null} display={compact(totals.generationTokensTotal)} color="var(--series-6, var(--series-3))"
+              sub={`${totals.requestsPerMin.toFixed(0)}/min completed`} spark={tl("cluster:rpm")} />
+          </div>
+        </div>
+
+        {/* Right: the history chart fills the column height. */}
+        <div className="flex min-w-0 flex-col rounded-xl border border-edge bg-surface-2/40">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 pt-2.5">
+            <span className="text-[10.5px] font-medium uppercase tracking-[0.07em] text-ink-muted">Tokens / sec</span>
+            <div className="ml-auto flex flex-wrap gap-3">
               {series.map((s) => (
                 <span key={s.label} className="flex items-center gap-1.5 text-[11px] text-ink-secondary">
-                  <span className="h-2 w-2 rounded-full" style={{ background: `var(${s.colorVar})` }} />
+                  <span className="h-[3px] w-3 rounded-full" style={{ background: `var(${s.colorVar})` }} />
                   {s.label}
                 </span>
               ))}
             </div>
-          )}
-          <LiveChip live={live} idle={idle} />
-        </div>
-      }
-    >
-      <div className="grid gap-6 p-5 lg:grid-cols-[auto_minmax(0,1fr)] lg:items-center">
-        <div className="flex items-center gap-6">
-          <Gauge value={perReq} max={gaugeMax} live={live} idle={idle} />
-          <div className="min-w-0">
-            <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-ink-muted">Per request</div>
-            <div className="mt-1 text-[13px] font-medium text-ink">
-              {idle ? "Idle — last measured rate" : "Decode speed one request receives"}
-            </div>
-            <div className="mt-3 space-y-1 text-[11px] text-ink-muted">
-              <div>
-                Peak <span className="tnum font-medium text-ink-secondary">{peak === null ? "—" : `${peak.toFixed(1)} tok/s`}</span>
-              </div>
-              <div>
-                Per token{" "}
-                <span className="tnum font-medium text-ink-secondary">
-                  {perReq ? `${(1000 / perReq).toFixed(1)} ms` : "—"}
-                </span>
-              </div>
-            </div>
+          </div>
+          <div className="min-h-[220px] flex-1 px-1 pb-1">
+            {ts.length > 1 && series.length > 0 ? (
+              <TimeChart
+                ts={ts}
+                series={series}
+                grow
+                minHeight={220}
+                format={(v) => `${v.toFixed(1)} tok/s`}
+                tickFormat={(v) => v.toFixed(0)}
+                minRange={10}
+                fill
+                themeKey={themeKey}
+              />
+            ) : (
+              <div className="grid h-full min-h-[220px] place-items-center text-[11px] text-ink-muted">Collecting throughput history…</div>
+            )}
           </div>
         </div>
-
-        <div className="grid grid-cols-2 gap-6 sm:grid-cols-3">
-          <Big
-            label="Aggregate"
-            value={aggregate}
-            unit="tok/s"
-            sub={aggPeak ? `peak ${aggPeak.toFixed(0)} · ${totals.requestsRunning} running` : `${totals.requestsRunning} running`}
-          />
-          <Big
-            label="Batch"
-            value={batch}
-            unit="×"
-            sub={batch ? "aggregate ÷ per request" : "single stream"}
-          />
-          <Big
-            label="Prefill"
-            value={totals.promptComputedTokensPerSec}
-            unit="tok/s"
-            digits={0}
-            sub={
-              totals.promptTokensPerSec > totals.promptComputedTokensPerSec
-                ? `${totals.promptTokensPerSec.toFixed(0)} ingested incl. cache`
-                : "computed prompt tokens"
-            }
-          />
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 divide-x divide-y divide-edge border-y border-edge sm:grid-cols-3 sm:divide-y-0 lg:grid-cols-6">
-        <Cell
-          label="Inter-token"
-          value={totals.interTokenLatencyMs === null ? "—" : `${totals.interTokenLatencyMs.toFixed(0)} ms`}
-          title="Mean time per engine decode step. Under speculative decoding a step emits several tokens."
-        />
-        <Cell label="In flight" value={`${totals.requestsRunning} · ${totals.requestsWaiting} queued`} />
-        <Cell label="Completed" value={`${totals.requestsPerMin.toFixed(0)}/min`} />
-        <Cell label="Prefix hit" value={pct(totals.promptCacheHitPct)}
-          title="Share of prompt tokens served from the prefix cache." />
-        <Cell label="Spec accept" value={pct(totals.specAcceptancePct)}
-          title="Share of speculative draft tokens accepted by the target model." />
-        <Cell label="Generated" value={compact(totals.generationTokensTotal)}
-          title={`${totals.generationTokensTotal.toLocaleString()} output tokens since the engines started`} />
-      </div>
-
-      <div className="px-3 pb-3 pt-4">
-        {ts.length > 1 && series.length > 0 ? (
-          <TimeChart
-            ts={ts}
-            series={series}
-            height={200}
-            format={(v) => `${v.toFixed(1)} tok/s`}
-            tickFormat={(v) => v.toFixed(0)}
-            minRange={10}
-            fill
-            themeKey={themeKey}
-          />
-        ) : (
-          <div className="flex h-[200px] items-center justify-center text-[11px] text-ink-muted">
-            Collecting throughput history…
-          </div>
-        )}
       </div>
     </Card>
+  );
+}
+
+function Mini({ label, value, unit }: { label: string; value: string; unit: string }) {
+  return (
+    <div className="min-w-0">
+      <div className="truncate text-ink-muted">{label}</div>
+      <div className="tnum truncate font-semibold text-ink">
+        {value} <span className="font-normal text-ink-muted">{unit}</span>
+      </div>
+    </div>
   );
 }
