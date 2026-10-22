@@ -16,6 +16,7 @@ import {
   readOllama,
   readOpenAiModels,
   specPosAcceptInterval,
+  decodeRateFromHistograms,
 } from "./inference.ts";
 import { parseDiscoveredEndpoints, parseInferenceScrapes } from "./parse.ts";
 import { US } from "./probe.ts";
@@ -343,5 +344,50 @@ describe("per-position speculative acceptance", () => {
     const rates = specPosAcceptInterval({ 0: 0 }, { 0: 189579, 1: 143246 }, 0, drafts)!;
     expect(rates).toHaveLength(2);
     expect(rates[1]).toBeCloseTo(56.9, 1);
+  });
+});
+
+describe("decodeRateFromHistograms", () => {
+  // Real numbers scraped from the DSpark vLLM server (MTP k=6). The inter-token
+  // histogram there gives 1000/ITL = 11.5 tok/s, a step rate; a streamed probe
+  // counting usage tokens measured ~50 tok/s. tokens/decode-seconds agrees.
+  const tokens = { sum: 1_446_294, count: 1_943 };
+  const decode = { sum: 35_673.59, count: 1_943 };
+
+  test("lifetime rate is tokens over decode seconds, not the step rate", () => {
+    const r = decodeRateFromHistograms(undefined, undefined, tokens, decode)!;
+    expect(r.basis).toBe("lifetime");
+    expect(r.tps).toBeCloseTo((1_446_294 - 1_943) / 35_673.59, 3);
+    expect(r.tps).toBeGreaterThan(40);
+  });
+
+  test("windowed rate uses only requests finished in the interval", () => {
+    const later = { sum: tokens.sum + 2_000, count: tokens.count + 5 };
+    const laterDecode = { sum: decode.sum + 40, count: decode.count + 5 };
+    const r = decodeRateFromHistograms(tokens, decode, later, laterDecode)!;
+    expect(r.basis).toBe("window");
+    expect(r.tps).toBeCloseTo((2_000 - 5) / 40, 6);
+  });
+
+  test("falls back to lifetime when nothing finished in the window", () => {
+    expect(decodeRateFromHistograms(tokens, decode, tokens, decode)!.basis).toBe("lifetime");
+  });
+
+  test("null without both histograms", () => {
+    expect(decodeRateFromHistograms(undefined, undefined, tokens, undefined)).toBeNull();
+    expect(decodeRateFromHistograms(undefined, undefined, undefined, decode)).toBeNull();
+  });
+
+  test("parses vllm:request_generation_tokens from /metrics", () => {
+    const text = [
+      'vllm:num_requests_running{model_name="m"} 0',
+      'vllm:request_generation_tokens_sum{model_name="m"} 1446294',
+      'vllm:request_generation_tokens_count{model_name="m"} 1943',
+      'vllm:request_decode_time_seconds_sum{model_name="m"} 35673.59',
+      'vllm:request_decode_time_seconds_count{model_name="m"} 1943',
+    ].join("\n");
+    const r = readMetrics(text)!;
+    expect(r.requestGenTokens).toEqual({ sum: 1446294, count: 1943 });
+    expect(r.latency.decode).toEqual({ sum: 35673.59, count: 1943 });
   });
 });

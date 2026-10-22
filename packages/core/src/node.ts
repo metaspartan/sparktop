@@ -19,6 +19,7 @@ import {
   counterIntervalRatio,
   histogramIntervalMean,
   histogramLifetimeMean,
+  decodeRateFromHistograms,
   readMetrics,
   readOllama,
   readOpenAiModels,
@@ -167,7 +168,7 @@ export class NodeCollector extends EventEmitter {
    * data" almost always. Comparing against a scrape from a minute ago instead
    * gives a mean over requests that actually finished.
    */
-  private latencyWindow = new Map<string, { t: number; latency: EngineReading["latency"] }[]>();
+  private latencyWindow = new Map<string, { t: number; latency: EngineReading["latency"]; genTokens?: EngineReading["requestGenTokens"] }[]>();
   /**
    * Recent counters per endpoint, for averaging over a window.
    *
@@ -801,7 +802,7 @@ export class NodeCollector extends EventEmitter {
        * took this long" is still true, just not recent.
        */
       const window = this.latencyWindow.get(key) ?? [];
-      window.push({ t: ts, latency: reading.latency });
+      window.push({ t: ts, latency: reading.latency, genTokens: reading.requestGenTokens });
       while (window.length > 1 && ts - window[0]!.t > LATENCY_WINDOW_MS) window.shift();
       this.latencyWindow.set(key, window);
       const oldest = window.length > 1 ? window[0] : undefined;
@@ -893,8 +894,19 @@ export class NodeCollector extends EventEmitter {
         interTokenLatencyMs: interTokenMs,
         // Per-request decode speed, which is what one user experiences —
         // distinct from the server's aggregate decode throughput.
-        perRequestDecodeTokensPerSec:
-          interTokenMs && interTokenMs > 0 ? Math.round((1000 / interTokenMs) * 10) / 10 : null,
+        // Per-request decode rate from tokens / decode-seconds when the engine
+        // exposes both histograms; 1000/ITL is a step rate under speculative
+        // decoding and is only the fallback.
+        perRequestDecodeTokensPerSec: (() => {
+          const r = decodeRateFromHistograms(
+            oldest?.genTokens,
+            oldest?.latency?.decode,
+            reading.requestGenTokens,
+            reading.latency.decode
+          );
+          if (r) return Math.round(r.tps * 10) / 10;
+          return interTokenMs && interTokenMs > 0 ? Math.round((1000 / interTokenMs) * 10) / 10 : null;
+        })(),
         e2eLatencyMs: e2eMs,
         queueLatencyMs: queueMs,
         prefillMs,

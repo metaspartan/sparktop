@@ -63,6 +63,17 @@ export interface EngineSpec {
     /** Decode phase duration, per request. */
     decode: string[];
   };
+  /**
+   * Per-request generated-token histogram (`_sum` = tokens, `_count` = requests).
+   *
+   * Paired with the `decode` duration histogram it gives the true per-request
+   * decode rate: (dTokens - dRequests) / dDecodeSeconds. The inter-token
+   * latency histogram cannot: with speculative decoding it records one
+   * observation per engine step, and a step emits several tokens, so
+   * 1000/ITL reports the step rate and undercounts by the acceptance length
+   * (measured ~3.5x on DSpark k=6: 14 tok/s shown vs ~50 real).
+   */
+  requestGenTokens?: string[];
   /** Prompt tokens served from the prefix cache rather than computed. */
   cachedPromptTokens: string[];
   /**
@@ -122,6 +133,7 @@ export const ENGINE_SPECS: EngineSpec[] = [
       prefill: ["vllm:request_prefill_time_seconds"],
       decode: ["vllm:request_decode_time_seconds"],
     },
+    requestGenTokens: ["vllm:request_generation_tokens"],
     cachedPromptTokens: ["vllm:prompt_tokens_cached_total"],
 
     specDecode: {
@@ -418,6 +430,36 @@ export interface EngineReading {
   kvCachePct?: number;
   /** Raw histogram totals, for deriving interval means against a prior scrape. */
   latency: Partial<Record<LatencyKey, HistogramTotals>>;
+  /** Per-request generated-token histogram totals, when the engine reports one. */
+  requestGenTokens?: HistogramTotals;
+}
+
+/**
+ * True per-request decode rate, tokens/second, from the generated-token and
+ * decode-duration histograms.
+ *
+ * A request's decode phase runs from its first output token to its last, so it
+ * decodes `tokens - 1` tokens in that time; summed over requests that is
+ * dSum(tokens) - dCount. Taken over the interval when both histograms
+ * advanced, otherwise over the server's lifetime. Null when either histogram
+ * is missing or nothing was decoded.
+ */
+export function decodeRateFromHistograms(
+  prevTokens: HistogramTotals | undefined,
+  prevDecode: HistogramTotals | undefined,
+  nowTokens: HistogramTotals | undefined,
+  nowDecode: HistogramTotals | undefined
+): { tps: number; basis: "window" | "lifetime" } | null {
+  if (!nowTokens || !nowDecode) return null;
+  if (prevTokens && prevDecode) {
+    const dReq = nowTokens.count - prevTokens.count;
+    const dTok = nowTokens.sum - prevTokens.sum - dReq;
+    const dSec = nowDecode.sum - prevDecode.sum;
+    if (dReq > 0 && dTok > 0 && dSec > 0) return { tps: dTok / dSec, basis: "window" };
+  }
+  const tok = nowTokens.sum - nowTokens.count;
+  if (tok > 0 && nowDecode.sum > 0) return { tps: tok / nowDecode.sum, basis: "lifetime" };
+  return null;
 }
 
 /** Read a histogram's cumulative sum and count, trying each candidate name. */
@@ -539,6 +581,10 @@ export function readMetrics(metricsText: string): EngineReading | null {
   for (const key of ["ttft", "interToken", "e2e", "queue", "prefill", "decode"] as const) {
     const h = readHistogram(samples, spec.latency[key]);
     if (h) reading.latency[key] = h;
+  }
+  if (spec.requestGenTokens?.length) {
+    const g = readHistogram(samples, spec.requestGenTokens);
+    if (g) reading.requestGenTokens = g;
   }
   const set = <K extends keyof EngineReading>(k: K, v: EngineReading[K]) => {
     if (v !== undefined && Number.isFinite(v as number)) reading[k] = v;

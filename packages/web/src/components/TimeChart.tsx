@@ -142,7 +142,24 @@ export function TimeChart({
           label: s.label,
           stroke: stroke[i],
           width: 2,
-          ...(fill && series.length === 1 ? { fill: hexAlpha(stroke[i] ?? "#888", 0.14) } : {}),
+          // Gradient area fill: strongest under the line, fading to nothing at
+          // the baseline, so the shape reads at a glance without the area
+          // drowning the grid. Several series share a chart at lower opacity.
+          ...(fill
+            ? {
+                fill: (u: uPlot) => {
+                  const c = stroke[i] ?? "#888";
+                  const top = series.length === 1 ? 0.32 : 0.12;
+                  const g = u.ctx.createLinearGradient(0, u.bbox.top, 0, u.bbox.top + u.bbox.height);
+                  g.addColorStop(0, hexAlpha(c, top));
+                  g.addColorStop(1, hexAlpha(c, 0));
+                  return g;
+                },
+              }
+            : {}),
+          // Monotone spline: smooth without overshooting below zero or above a
+          // real peak, which a plain cubic would do on a step in throughput.
+          paths: uPlot.paths.spline?.(),
           points: { show: false },
           // Do not bridge gaps: a break in the line is meaningful.
           spanGaps: false,

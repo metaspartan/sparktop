@@ -343,3 +343,16 @@ body {
     transform: none;
   }
 }
+
+/* Throughput gauge: a slow breathing glow while requests are decoding. */
+.gauge-live {
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--accent) 55%, transparent));
+  animation: gauge-breathe 2.4s ease-in-out infinite;
+}
+@keyframes gauge-breathe {
+  0%, 100% { filter: drop-shadow(0 0 2px color-mix(in srgb, var(--accent) 35%, transparent)); }
+  50% { filter: drop-shadow(0 0 7px color-mix(in srgb, var(--accent) 70%, transparent)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gauge-live { animation: none; }
+}
