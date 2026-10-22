@@ -626,6 +626,22 @@ export interface ClusterSnapshot {
      */
     perRequestTokensPerSec: number | null;
     /**
+     * Whether `perRequestTokensPerSec` is a live windowed measurement or a
+     * server-lifetime average the engine fell back to when no request finished
+     * inside the window.
+     *
+     * An idle cluster reports `"lifetime"`, and the figure is then real but not
+     * current: it drifts with the server's whole history rather than with
+     * anything happening now, so it can differ materially from what the next
+     * request will actually see. A headline that does not say which it is
+     * therefore misleads in both directions -- an idle cluster looks slower than
+     * it is, and a stale-fast average can outlast the conditions that produced
+     * it. `"window"` wins a tie because a live reading is the more informative.
+     *
+     * Null when no engine reports a per-request rate at all.
+     */
+    latencyBasis: "window" | "lifetime" | null;
+    /**
      * Mean time per output token during decode, milliseconds, over the same
      * window as `perRequestTokensPerSec`. Null for the same reason.
      */

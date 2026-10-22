@@ -585,6 +585,7 @@ function rollUp(nodes: NodeSnapshot[]): ClusterSnapshot["totals"] {
    */
   let perReqSum = 0, perReqN = 0;
   let itlSum = 0, itlN = 0;
+  let sawWindow = false, sawLifetime = false;
   let specSum = 0, specN = 0;
   let hitSum = 0, hitN = 0;
   let kvSum = 0, kvN = 0;
@@ -622,6 +623,19 @@ function rollUp(nodes: NodeSnapshot[]): ClusterSnapshot["totals"] {
       if (e.perRequestDecodeTokensPerSec !== null) {
         perReqSum += e.perRequestDecodeTokensPerSec;
         perReqN++;
+        /*
+         * Whether that rate is a live measurement or a server-lifetime
+         * average the engine fell back to when no request completed inside the
+         * window. An idle cluster reports the latter, and it is a real number
+         * but not a current one: it keeps drifting with the whole lifetime
+         * rather than with anything happening now.
+         *
+         * Recorded so the headline can say which it is. Averaged the same way
+         * as the rate itself, and "window" wins a tie because a windowed
+         * reading is the more informative of the two.
+         */
+        if (e.latencyBasis === "window") sawWindow = true;
+        else if (e.latencyBasis === "lifetime") sawLifetime = true;
       }
       if (e.interTokenLatencyMs !== null) {
         itlSum += e.interTokenLatencyMs;
@@ -679,6 +693,7 @@ function rollUp(nodes: NodeSnapshot[]): ClusterSnapshot["totals"] {
     // cluster with two independent servers does not decode at 2x either rate.
     perRequestTokensPerSec:
       perReqN > 0 ? Math.round((perReqSum / perReqN) * 10) / 10 : null,
+    latencyBasis: sawWindow ? "window" : sawLifetime ? "lifetime" : null,
     interTokenLatencyMs: itlN > 0 ? Math.round((itlSum / itlN) * 10) / 10 : null,
     specAcceptancePct: specN > 0 ? Math.round((specSum / specN) * 10) / 10 : null,
     requestsPerMin: Math.round(requestsPerMin * 10) / 10,

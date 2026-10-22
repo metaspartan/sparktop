@@ -91,6 +91,17 @@ export function ThroughputHero({ totals, history, themeKey }: Props) {
    * caught up. A genuine batch size is never less than one anyway.
    */
   const ratio = perReq !== null && perReq > 0 && aggregate > 0 ? aggregate / perReq : null;
+  /*
+   * Whether the headline is a current measurement or a lifetime average the
+   * engines fell back to because nothing finished inside the scrape window.
+   *
+   * Both are honest numbers and the dashboard used to show them identically,
+   * which is how an idle cluster ends up reporting a rate that no request is
+   * currently receiving -- and a stale-fast average can outlive the conditions
+   * that produced it. An idle reading is dimmed and labelled instead, so the
+   * headline is never quietly answering a question nobody asked.
+   */
+  const stale = perReq !== null && totals.latencyBasis === "lifetime";
   const batch = ratio !== null && ratio >= 1 ? ratio : null;
 
   const series: ChartSeries[] = [
@@ -120,11 +131,21 @@ export function ThroughputHero({ totals, history, themeKey }: Props) {
       <div className="flex flex-wrap items-end gap-x-10 gap-y-5">
         <Figure
           hero
-          label="Per request"
+          label={stale ? "Per request (idle)" : "Per request"}
           value={perReq === null ? "—" : perReq.toFixed(1)}
           unit="tok/s"
-          sub="decode speed one request receives"
-          tone={perReq === null ? undefined : "var(--series-1)"}
+          sub={
+            stale
+              ? "last measured while busy · not a current rate"
+              : "decode speed one request receives"
+          }
+          tone={
+            perReq === null
+              ? undefined
+              : stale
+                ? "var(--ink-muted)"
+                : "var(--series-1)"
+          }
         />
         <Figure
           label="Aggregate"

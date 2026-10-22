@@ -85,6 +85,85 @@ function node(id: string, ports: FabricPort[], over: Partial<NodeSnapshot> = {})
   };
 }
 
+describe("cluster latency basis", () => {
+  // The per-request rate is the number the dashboard leads with, and it comes
+  // from whichever window the engine had: a live measurement, or the server's
+  // whole-lifetime average when nothing finished inside the scrape window.
+  // Both are legitimate numbers, so the cluster has to say which one it is
+  // reporting rather than letting the headline present an idle fallback as if
+  // it were a current rate.
+
+  /**
+   * A node whose vLLM endpoint reports a per-request rate on `basis`.
+   *
+   * `genTokens` is part of the signature because the cluster de-duplicates
+   * endpoints sharing a model+cumulative-token fingerprint: two engines that
+   * look identical are counted once, so a two-engine test has to make them
+   * genuinely distinct.
+   */
+  function serving(
+    id: string,
+    basis: "window" | "lifetime" | null,
+    perReq: number | null,
+    genTokens = 0,
+  ): NodeSnapshot {
+    return node(id, [], {
+      inference: [
+        {
+          id: `${id}:8888`,
+          nodeId: id,
+          nodeLabel: id,
+          port: 8888,
+          engine: "vllm",
+          engineLabel: "vLLM",
+          models: ["m"],
+          reachable: true,
+          requestsRunning: 0,
+          requestsWaiting: 0,
+          requestsFinishedTotal: 0,
+          promptTokensTotal: 0,
+          generationTokensTotal: genTokens,
+          kvCachePct: 0,
+          decodeTokensPerSec: 0,
+          prefillTokensPerSec: 0,
+          prefillComputedTokensPerSec: 0,
+          requestsPerMin: 0,
+          cachedPromptTokensTotal: 0,
+          promptCacheHitPct: null,
+          specAcceptanceRatePct: null,
+          specMeanAcceptedLength: null,
+          ttftMs: null,
+          interTokenLatencyMs: null,
+          perRequestDecodeTokensPerSec: perReq,
+          e2eLatencyMs: null,
+          queueLatencyMs: null,
+          prefillMs: null,
+          latencyBasis: basis,
+        } as unknown as NodeSnapshot["inference"][number],
+      ],
+    });
+  }
+
+  test("reports the basis its engines reported", () => {
+    expect(buildClusterSnapshot([serving("a", "window", 14.7)]).totals.latencyBasis).toBe("window");
+    expect(buildClusterSnapshot([serving("a", "lifetime", 11.5)]).totals.latencyBasis).toBe("lifetime");
+  });
+
+  test("is null when no engine reports a per-request rate", () => {
+    expect(buildClusterSnapshot([node("a", [])]).totals.latencyBasis).toBeNull();
+  });
+
+  test("prefers window when engines disagree", () => {
+    // A live reading on either engine is the more informative one, so it wins
+    // the cluster-level label rather than averaging to something meaningless.
+    const snap = buildClusterSnapshot([
+      serving("a", "lifetime", 11.5, 1_000),
+      serving("b", "window", 14.7, 2_000),
+    ]);
+    expect(snap.totals.latencyBasis).toBe("window");
+  });
+});
+
 describe("fabric pairing", () => {
   test("pairs two ports that share a subnet across different nodes", () => {
     const a = node("a", [port()]);
