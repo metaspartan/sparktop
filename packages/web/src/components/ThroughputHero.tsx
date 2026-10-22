@@ -87,11 +87,11 @@ function Gauge({
         <g transform="rotate(150 84 84)">
           <circle cx="84" cy="84" r={R} fill="none" stroke="var(--surface-2)" strokeWidth="12"
             strokeDasharray={`${track} ${C}`} strokeLinecap="round" />
-          <circle cx="84" cy="84" r={R} fill="none"
+          {frac > 0.002 && <circle cx="84" cy="84" r={R} fill="none"
             stroke={idle ? color : "url(#gauge-grad)"} strokeWidth="12" strokeLinecap="round"
             strokeDasharray={`${track * frac} ${C}`}
             className={live ? "gauge-live" : undefined}
-            style={{ transition: "stroke 400ms ease" }} />
+            style={{ transition: "stroke 400ms ease" }} />}
         </g>
       </svg>
       <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center pt-1">

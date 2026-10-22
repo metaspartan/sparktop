@@ -6,15 +6,31 @@
   "license": "MIT",
   "author": "Carsen Klock",
   "homepage": "https://github.com/metaspartan/sparktop#readme",
-  "bugs": { "url": "https://github.com/metaspartan/sparktop/issues" },
+  "bugs": {
+    "url": "https://github.com/metaspartan/sparktop/issues"
+  },
   "keywords": [
-    "dgx-spark", "gb10", "nvidia", "rdma", "roce", "connectx",
-    "nccl", "vllm", "monitoring", "tui", "dashboard"
+    "dgx-spark",
+    "gb10",
+    "nvidia",
+    "rdma",
+    "roce",
+    "connectx",
+    "nccl",
+    "vllm",
+    "monitoring",
+    "tui",
+    "dashboard"
   ],
-  "repository": { "type": "git", "url": "https://github.com/metaspartan/sparktop.git" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/metaspartan/sparktop.git"
+  },
   "workspaces": ["packages/*"],
   "type": "module",
-  "engines": { "bun": ">=1.4.0" },
+  "engines": {
+    "bun": ">=1.4.0"
+  },
   "scripts": {
     "dev": "bun run --cwd packages/server dev",
     "dev:web": "bun run --cwd packages/web dev",
@@ -29,7 +45,7 @@
     "scan:osv": "osv-scanner scan source -r ."
   },
   "devDependencies": {
-    "@types/bun": "^1.1.14",
+    "@types/bun": "^1.4.3",
     "typescript": "^5.7.2"
   }
 }

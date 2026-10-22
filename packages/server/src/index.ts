@@ -230,7 +230,7 @@ const MIME: Record<string, string> = {
 };
 
 /** Serve the built SPA, falling back to index.html for client-side routes. */
-async function serveStatic(pathname: string): Promise<Response> {
+async function serveStatic(pathname: string, acceptEncoding = ""): Promise<Response> {
   if (!existsSync(WEB_ROOT)) {
     return new Response(
       "sparktop web UI is not built.\n\nRun: bun run build:web\n\nThe API and WebSocket endpoints are available regardless.",
@@ -260,9 +260,36 @@ async function serveStatic(pathname: string): Promise<Response> {
 
   const ext = (file.name ?? "").slice((file.name ?? "").lastIndexOf("."));
   const headers: Record<string, string> = { "content-type": MIME[ext] ?? "application/octet-stream" };
-  // Vite emits content-hashed asset names, so they are safe to cache hard.
+  // The build emits content-hashed asset names, so they are safe to cache hard.
   headers["cache-control"] = rel.startsWith("assets/") ? "public, max-age=31536000, immutable" : "no-cache";
+  headers["vary"] = "Accept-Encoding";
+
+  /*
+   * Serve the precompressed sibling the build wrote next to each output, when
+   * the client accepts it. zstd first, then gzip; identity when neither exists
+   * (a hand-copied asset, or a client that sends no Accept-Encoding).
+   */
+  const path = file.name ?? "";
+  for (const [enc, suffix] of [["zstd", ".zst"], ["gzip", ".gz"]] as const) {
+    if (!acceptsEncoding(acceptEncoding, enc)) continue;
+    const packed = Bun.file(path + suffix);
+    if (await packed.exists()) {
+      headers["content-encoding"] = enc;
+      return new Response(packed, { headers });
+    }
+  }
   return new Response(file, { headers });
+}
+
+/** Whether an Accept-Encoding header admits `enc` (absent or q=0 means no). */
+export function acceptsEncoding(header: string, enc: string): boolean {
+  for (const part of header.toLowerCase().split(",")) {
+    const [name, ...params] = part.trim().split(";");
+    if (name?.trim() !== enc) continue;
+    const q = params.map((x) => x.trim()).find((x) => x.startsWith("q="));
+    return q === undefined || Number(q.slice(2)) > 0;
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -542,7 +569,7 @@ const server = Bun.serve<SocketData, never>({
       return err("Not found", 404);
     }
 
-    return serveStatic(pathname);
+    return serveStatic(pathname, req.headers.get("accept-encoding") ?? "");
   },
 
   websocket: {

@@ -25,7 +25,7 @@ const HAS_PHOTO: ReadonlySet<SparkVariantId> = new Set<SparkVariantId>([
   "acer",
 ]);
 
-const photoUrl = (id: SparkVariantId): string => `${import.meta.env.BASE_URL}variants/${id}.webp`;
+const photoUrl = (id: SparkVariantId): string => `/variants/${id}.webp`;
 
 /**
  * The chassis photo for a variant, or null when there is none.

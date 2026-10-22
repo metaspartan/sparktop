@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type CSSProperties } from "react";
 import { fmtBytes, fmtGbps, fmtPct, fmtTemp, fmtWatts, pctOf, shortImage } from "@sparktop/core";
 import type { ClusterSnapshot, ClusterWarning, DistributedJob, HistoryPayload } from "@sparktop/core";
 import { useCluster } from "./lib/useCluster";
@@ -66,16 +66,13 @@ export default function App() {
 
         <main className={`mx-auto flex max-w-[1800px] flex-col ${gap} px-4 pb-16 pt-3 xl:pl-10`}>
           {!snapshot ? (
-            <Card>
-              <p className="py-12 text-center text-sm text-ink-muted">
-                {conn === "open" ? "Waiting for the first snapshot…" : "Connecting to sparktop server…"}
-              </p>
-            </Card>
+            <LoadingSkeleton label={conn === "open" ? "Waiting for the first snapshot…" : "Connecting to sparktop server…"} />
           ) : snapshot.nodes.length === 0 ? (
             <Setup onAdded={refreshConfig} />
           ) : (
             <>
-              {visible.map((id) => (
+              {visible.map((id, i) => (
+                <div key={id} className="card-enter" style={{ "--i": i } as CSSProperties}>
                 <Sortable
                   key={id}
                   index={layout.order.indexOf(id)}
@@ -85,6 +82,7 @@ export default function App() {
                 >
                   {sections[id]}
                 </Sortable>
+                </div>
               ))}
             </>
           )}
@@ -134,7 +132,17 @@ function Header({
   const label = conn === "open" ? (stale ? `stale ${(staleMs / 1000).toFixed(0)}s` : "live") : conn;
 
   return (
-    <header className="sticky top-0 z-30 border-b border-edge bg-surface-1/90 backdrop-blur">
+    <header className="sticky top-0 z-30 border-b border-edge bg-surface-1/75 backdrop-blur-xl backdrop-saturate-150">
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 bottom-[-1px] h-px"
+        style={{
+          background:
+            "linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 55%, transparent) 30%, color-mix(in srgb, var(--series-1) 45%, transparent) 70%, transparent)",
+          opacity: conn === "open" && !stale ? 0.9 : 0.25,
+          transition: "opacity 600ms var(--ease-out)",
+        }}
+      />
       {/*
         Three zones: name, cluster totals, actions.
         `xl:pl-10` mirrors <main>, whose extra left padding makes room for the
@@ -144,8 +152,20 @@ function Header({
         three-column grid.
       */}
       <div className="mx-auto flex max-w-[1800px] flex-wrap items-center gap-x-4 gap-y-1.5 px-4 py-2 xl:pl-10">
-        <span className="order-1 text-[17px] font-bold tracking-tight text-ink">
-          spark<span style={{ color: "var(--accent)" }}>top</span>
+        <span className="order-1 flex items-center gap-2 text-[17px] font-bold tracking-[-0.02em] text-ink">
+          <span
+            aria-hidden
+            className="grid h-6 w-6 place-items-center rounded-[7px] text-[13px] text-white"
+            style={{
+              background: "linear-gradient(135deg, var(--accent-strong), var(--accent) 55%, color-mix(in srgb, var(--series-1) 70%, var(--accent)))",
+              boxShadow: "var(--glow-accent)",
+            }}
+          >
+            ⚡
+          </span>
+          <span>
+            spark<span style={{ color: "var(--accent)" }}>top</span>
+          </span>
         </span>
 
         {/* Cluster totals live in the header rather than as a section: it is a
@@ -249,7 +269,7 @@ function SummaryStrip({ snap }: { snap: ClusterSnapshot }) {
      * wrapping row on narrow ones. Placement is owned by the header, so this
      * only decides how the figures sit relative to each other.
      */
-    <div className="no-scrollbar flex flex-nowrap items-center gap-x-6 overflow-x-auto lg:justify-center">
+    <div className="no-scrollbar flex flex-nowrap items-center gap-x-6 overflow-x-auto lg:[justify-content:safe_center]">
       {items.map((i) => (
         <div key={i.label} className="w-[112px] flex-none lg:w-[118px]">
           <div className="flex items-baseline gap-2">
@@ -458,3 +478,32 @@ function ClusterCharts({
   );
 }
 
+/**
+ * Placeholder shaped like the dashboard, shown until the first snapshot.
+ *
+ * A bare "loading" line gives the eye nothing to settle on and then the whole
+ * page jumps into place. Blocks the size of the real sections make the swap
+ * read as content filling in rather than a layout appearing.
+ */
+function LoadingSkeleton({ label }: { label: string }) {
+  return (
+    <div className="flex flex-col gap-4" aria-busy="true" aria-live="polite">
+      <div className="card rounded-2xl p-5">
+        <div className="flex items-center gap-6">
+          <div className="skeleton h-[168px] w-[168px] rounded-full" />
+          <div className="flex-1 space-y-3">
+            <div className="skeleton h-3 w-24" />
+            <div className="skeleton h-8 w-48" />
+            <div className="skeleton h-3 w-64" />
+          </div>
+        </div>
+        <div className="skeleton mt-6 h-[180px] w-full" />
+      </div>
+      <div className="grid gap-4 xl:grid-cols-2">
+        <div className="skeleton h-[320px]" />
+        <div className="skeleton h-[320px]" />
+      </div>
+      <p className="text-center text-[12px] text-ink-muted">{label}</p>
+    </div>
+  );
+}

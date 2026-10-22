@@ -1,6 +1,6 @@
 /** Small shared building blocks: cards, meters, sparklines, status chips. */
 
-import { createContext, useContext, type ReactNode } from "react";
+import { createContext, useContext, type CSSProperties, type ReactNode } from "react";
 
 /** Compact mode trims padding everywhere at once, without prop-drilling. */
 export const DensityContext = createContext<"comfortable" | "compact">("comfortable");
@@ -13,6 +13,7 @@ export function Card({
   className = "",
   bodyClass = "",
   fill = false,
+  index,
 }: {
   title?: ReactNode;
   right?: ReactNode;
@@ -27,19 +28,22 @@ export function Card({
    * which is what a chart card does when its neighbour is a long list.
    */
   fill?: boolean;
+  /** Position in an entry stagger; omit to skip the entrance animation. */
+  index?: number;
 }) {
   const dense = useDensity() === "compact";
   return (
     <section
-      className={`flex min-w-0 flex-col rounded-xl border border-edge bg-surface-1 shadow-[0_1px_2px_rgb(0_0_0/0.04)] ${className}`}
+      className={`card flex min-w-0 flex-col rounded-2xl ${index !== undefined ? "card-enter" : ""} ${className}`}
+      style={index !== undefined ? ({ "--i": index } as CSSProperties) : undefined}
     >
       {(title || right) && (
         <header
-          className={`flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-edge ${
-            dense ? "px-3 py-1.5" : "px-4 py-2.5"
+          className={`flex min-h-[44px] flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-edge ${
+            dense ? "px-3 py-1.5" : "px-4 py-2"
           }`}
         >
-          <h2 className="text-[13px] font-semibold tracking-tight text-ink">{title}</h2>
+          <h2 className="text-[13px] font-semibold tracking-[-0.01em] text-ink">{title}</h2>
           {right}
         </header>
       )}
@@ -88,15 +92,15 @@ export function Meter({
   const sized = /(^|\s)(w-|min-w-|max-w-|flex-1|basis-)/.test(className);
   return (
     <div
-      className={`h-1.5 ${sized ? "" : "w-full"} overflow-hidden rounded-full bg-surface-2 ${className}`}
+      className={`h-1.5 ${sized ? "" : "w-full"} overflow-hidden rounded-full bg-surface-2 ring-1 ring-inset ring-edge ${className}`}
       role="meter"
       aria-valuenow={Math.round(pct)}
       aria-valuemin={0}
       aria-valuemax={100}
     >
       <div
-        className="h-full rounded-full transition-[width] duration-300 ease-out"
-        style={{ width: `${pct}%`, background: bg }}
+        className="h-full rounded-full transition-[width] duration-700 ease-[cubic-bezier(0.22,1,0.36,1)]"
+        style={{ width: `${pct}%`, background: `linear-gradient(90deg, color-mix(in srgb, ${bg} 70%, transparent), ${bg})` }}
       />
     </div>
   );
@@ -223,8 +227,8 @@ export function Stat({
 }) {
   return (
     <div className="min-w-0">
-      <div className="truncate text-[11px] font-medium uppercase tracking-wide text-ink-muted">{label}</div>
-      <div className="mt-0.5 truncate text-[19px] font-semibold leading-tight text-ink" style={accent ? { color: accent } : undefined}>
+      <div className="truncate text-[10.5px] font-medium uppercase tracking-[0.07em] text-ink-muted">{label}</div>
+      <div className="tnum mt-1 truncate text-[19px] font-semibold leading-tight tracking-[-0.01em] text-ink" style={accent ? { color: accent } : undefined}>
         {value}
       </div>
       {sub !== undefined && <div className="truncate text-[11px] text-ink-secondary">{sub}</div>}

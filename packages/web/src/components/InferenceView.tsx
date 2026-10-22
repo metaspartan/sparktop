@@ -552,9 +552,9 @@ function EndpointRow({ e }: { e: InferenceEndpoint }) {
       <div className={`grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] sm:grid-cols-4 ${stale ? "mt-0.5" : "mt-1.5"}`}>
         <Latency label="TTFT" ms={e.ttftMs} hint="Time to first token" stale={stale} />
         <Latency
-          label="Per-token"
+          label="Decode step"
           ms={e.interTokenLatencyMs}
-          hint="Inter-token latency during decode"
+          hint="Time per engine decode step. With speculative decoding one step emits several tokens, so this is not 1000 / tok/s."
           extra={e.perRequestDecodeTokensPerSec !== null ? `${e.perRequestDecodeTokensPerSec}/s per req` : undefined}
           stale={stale}
         />

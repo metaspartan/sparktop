@@ -1,0 +1,8 @@
+[install]
+# Hoisted node_modules: one flat tree of real directories, no per-package
+# symlinks. Isolated linking writes relative symlinks that Windows cannot
+# follow without Developer Mode, so packages resolved on Linux but not here.
+linker = "hoisted"
+# bun-plugin-tailwind declares `bun` as a peer; the runtime already is Bun, and
+# auto-installing the npm `bun` wrapper runs a postinstall that fails.
+peer = false
