@@ -391,3 +391,23 @@ describe("decodeRateFromHistograms", () => {
     expect(r.latency.decode).toEqual({ sum: 35673.59, count: 1943 });
   });
 });
+
+describe("TensorFold", () => {
+  test("reads authenticated TensorFold metrics without counting HTTP replies as generations", () => {
+    const r = readMetrics([
+      'tensorfold:requests_running 1',
+      'tensorfold:requests_waiting 0',
+      'tensorfold:requests_total{status="401"} 7',
+      'tensorfold:generation_tokens_total 500',
+      'tensorfold:request_decode_time_seconds_count 2',
+      'tensorfold:request_time_per_output_token_seconds_sum 0.025',
+      'tensorfold:request_time_per_output_token_seconds_count 2',
+      'tensorfold:mtp_drafted_total 100',
+      'tensorfold:mtp_accepted_total 70',
+    ].join("\n"))!;
+    expect(r.engine).toBe("tensorfold");
+    expect(r.requestsFinishedTotal).toBe(2);
+    expect(r.generationTokensTotal).toBe(500);
+    expect(r.specAcceptedTotal).toBe(70);
+  });
+});

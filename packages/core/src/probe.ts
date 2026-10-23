@@ -221,8 +221,8 @@ export function buildFastProbe(endpoints: DiscoveredEndpoint[] = []): string {
        */
       const fetchCmd =
         e.kind === "metrics"
-          ? `curl -s -m 2 '${url}' 2>/dev/null | grep -E '^(vllm:|sglang:|llamacpp:|tgi_|nv_inference)' | grep -vE '_bucket[{ ]|_created[{ ]' | head -c 16384`
-          : `curl -s -m 2 '${url}' 2>/dev/null | head -c 4096`;
+          ? `curl -s -m 2 ${e.port === 8888 ? `-H @"$HOME/.config/sparktop/inference-8888.headers"` : ""} '${url}' 2>/dev/null | grep -E '^(tensorfold:|vllm:|sglang:|llamacpp:|tgi_|nv_inference)' | grep -vE '_bucket[{ ]|_created[{ ]' | head -c 16384`
+          : `curl -s -m 2 ${e.port === 8888 ? `-H @"$HOME/.config/sparktop/inference-8888.headers"` : ""} '${url}' 2>/dev/null | head -c 4096`;
       return [
         `printf 'EP${US}%s${US}%s\\n' '${e.port}' '${e.kind}'`,
         fetchCmd,
@@ -335,8 +335,9 @@ for p in \$(ss -tlnH 2>/dev/null | awk '{print \$4}' | grep -vE '^10\.100\.' | s
   # Match the engine signature across the whole body, not a prefix of it. A
   # vLLM /metrics opens with several hundred bytes of Python GC boilerplate, so
   # truncating the response before matching finds nothing at all.
-  sig=\$(curl -s --connect-timeout 1 -m 1 "http://127.0.0.1:\$p/metrics" 2>/dev/null \\
-        | grep -m1 -oE '^(vllm:|sglang:|llamacpp:|tgi_|nv_inference)')
+  auth=""; [ "\$p" != 8888 ] || { [ ! -r "\$HOME/.config/sparktop/inference-8888.headers" ] || auth="\$HOME/.config/sparktop/inference-8888.headers"; }
+  sig=\$(curl \${auth:+-H @"\$auth"} -s --connect-timeout 1 -m 1 "http://127.0.0.1:\$p/metrics" 2>/dev/null \\
+        | grep -m1 -oE '^(tensorfold:|vllm:|sglang:|llamacpp:|tgi_|nv_inference)')
   if [ -n "\$sig" ]; then
     # Ask what model is loaded.
     #
@@ -347,7 +348,7 @@ for p in \$(ss -tlnH 2>/dev/null | awk '{print \$4}' | grep -vE '^10\.100\.' | s
     # The body is checked before anything is taken from it. A server with an
     # API key answers /v1/models with an error document, and an error that
     # happened to carry an "id" would otherwise be reported as the model name.
-    mb=\$(curl -s --connect-timeout 1 -m 1 "http://127.0.0.1:\$p/v1/models" 2>/dev/null | head -c 600)
+    mb=\$(curl \${auth:+-H @"\$auth"} -s --connect-timeout 1 -m 1 "http://127.0.0.1:\$p/v1/models" 2>/dev/null | head -c 600)
     m=""
     case "\$mb" in
       *'"object"'*|*'"data"'*)

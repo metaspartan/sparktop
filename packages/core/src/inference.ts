@@ -15,6 +15,7 @@
  */
 
 export type EngineId =
+  | "tensorfold"
   | "vllm"
   | "sglang"
   | "llamacpp"
@@ -153,6 +154,21 @@ export const ENGINE_SPECS: EngineSpec[] = [
     estimatedFlops: ["vllm:estimated_flops_per_gpu_total"],
     estimatedReadBytes: ["vllm:estimated_read_bytes_per_gpu_total"],
     estimatedWriteBytes: ["vllm:estimated_write_bytes_per_gpu_total"],
+  },
+  {
+    id: "tensorfold", label: "TensorFold", signature: /^tensorfold:/m,
+    running: ["tensorfold:requests_running"], waiting: ["tensorfold:requests_waiting"],
+    promptTokens: ["tensorfold:prompt_tokens_total"], genTokens: ["tensorfold:generation_tokens_total"],
+    finished: ["tensorfold:request_decode_time_seconds_count"],
+    kvCache: ["tensorfold:kv_cache_usage_ratio"], kvCacheScale: 100,
+    latency: { ttft: ["tensorfold:time_to_first_token_seconds"],
+      interToken: ["tensorfold:request_time_per_output_token_seconds"],
+      e2e: ["tensorfold:request_latency_seconds"], queue: [],
+      prefill: ["tensorfold:request_prefill_time_seconds"], decode: ["tensorfold:request_decode_time_seconds"] },
+    cachedPromptTokens: [],
+    specDecode: { accepted: ["tensorfold:mtp_accepted_total"], drafted: ["tensorfold:mtp_drafted_total"], drafts: [], perPos: [] },
+    mmCache: { hits: [], queries: [] }, prefixCache: { hits: [], queries: [] },
+    estimatedFlops: [], estimatedReadBytes: [], estimatedWriteBytes: [],
   },
   {
     id: "sglang",
