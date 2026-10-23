@@ -29,7 +29,7 @@
   "workspaces": ["packages/*"],
   "type": "module",
   "engines": {
-    "bun": ">=1.4.0"
+    "bun": ">=1.4.4"
   },
   "scripts": {
     "dev": "bun run --cwd packages/server dev",
@@ -45,7 +45,7 @@
     "scan:osv": "osv-scanner scan source -r ."
   },
   "devDependencies": {
-    "@types/bun": "^1.4.3",
-    "typescript": "^5.7.2"
+    "@types/bun": "^1.4.4",
+    "typescript": "^7.0.2"
   }
 }

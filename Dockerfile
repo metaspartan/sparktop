@@ -7,10 +7,10 @@
 # needs an SSH client path to the nodes, not to be one of them.
 
 # ---- Stage 1: dependencies -------------------------------------------------
-FROM oven/bun:1.4-alpine AS deps
+FROM oven/bun:1.4.4-alpine AS deps
 WORKDIR /app
 
-COPY package.json bun.lock* ./
+COPY package.json bun.lock* bunfig.toml ./
 COPY packages/core/package.json packages/core/
 COPY packages/server/package.json packages/server/
 COPY packages/web/package.json packages/web/
@@ -27,7 +27,7 @@ COPY packages/ packages/
 RUN bun run build:web
 
 # ---- Stage 3: runtime ------------------------------------------------------
-FROM oven/bun:1.4-alpine AS runtime
+FROM oven/bun:1.4.4-alpine AS runtime
 WORKDIR /app
 
 # openssh-client is not used for transport (ssh2 speaks the protocol directly),
@@ -54,7 +54,7 @@ ENV NODE_ENV=production \
 # source is not shipped: bun resolves the workspace against the lockfile, and
 # omitting a member makes the lockfile look stale, which --frozen-lockfile
 # (correctly) refuses to work around.
-COPY package.json bun.lock* ./
+COPY package.json bun.lock* bunfig.toml ./
 COPY packages/core/package.json packages/core/
 COPY packages/server/package.json packages/server/
 COPY packages/tui/package.json packages/tui/

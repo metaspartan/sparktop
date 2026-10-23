@@ -15,10 +15,9 @@
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "types": ["bun"],
-    "baseUrl": ".",
     "paths": {
-      "@sparktop/core": ["packages/core/src/index.ts"],
-      "@sparktop/core/*": ["packages/core/src/*"]
+      "@sparktop/core": ["./packages/core/src/index.ts"],
+      "@sparktop/core/*": ["./packages/core/src/*"]
     }
   },
   "include": ["packages/*/src/**/*.ts", "packages/*/src/**/*.tsx"],

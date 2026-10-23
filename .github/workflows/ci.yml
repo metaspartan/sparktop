@@ -23,7 +23,7 @@ jobs:
         # The floor from package.json engines, and whatever is current — so the
         # supported minimum is actually exercised, and a future Bun that breaks
         # the build is caught here rather than by a user.
-        bun: ["1.4.0", "latest"]
+        bun: ["1.4.4", "latest"]
     steps:
       - uses: actions/checkout@v4
 
