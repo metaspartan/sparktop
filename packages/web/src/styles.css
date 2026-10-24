@@ -462,3 +462,19 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .card-enter, .drawer-scrim, .drawer-panel, .value-flash { animation: none; }
 }
+/* Workspace navigation keeps secondary panels out of the overview without
+   stopping collection. The same focus treatment applies to every control. */
+a:focus-visible, button:focus-visible, select:focus-visible, input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.skip-link {
+  position: fixed; left: 1rem; top: -6rem; z-index: 100;
+  border-radius: .5rem; background: var(--surface-1); color: var(--text-primary);
+  padding: .75rem 1rem; border: 1px solid var(--accent);
+}
+.skip-link:focus { top: .75rem; }
+@media (max-width: 639px) {
+  .dashboard-heading { align-items: stretch; }
+  .dashboard-nav { width: 100%; }
+}

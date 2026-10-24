@@ -3,6 +3,7 @@ import { fmtBytes, fmtGbps, fmtPct, fmtTemp, fmtWatts, pctOf, shortImage } from 
 import type { ClusterSnapshot, ClusterWarning, DistributedJob, HistoryPayload } from "@sparktop/core";
 import { useCluster } from "./lib/useCluster";
 import { useTheme } from "./lib/theme";
+import { WORKSPACES, workspaceFromHash, workspaceSections } from "./lib/dashboard";
 import { SECTIONS, useLayout, type SectionId } from "./lib/useLayout";
 import { Badge, Card, DensityContext, LegendItem, Meter, tempTone, utilTone } from "./components/primitives";
 import { Sortable } from "./components/Sortable";
@@ -22,6 +23,13 @@ export default function App() {
   const { snapshot, history, nodes: nodeConfigs, conn, staleMs, intervals, refreshConfig } = useCluster();
   const { choice, resolved, setChoice } = useTheme();
   const layout = useLayout();
+  const [workspace, setWorkspace] = useState(() => workspaceFromHash(window.location.hash));
+  useEffect(() => {
+    const sync = () => setWorkspace(workspaceFromHash(window.location.hash));
+    window.addEventListener("hashchange", sync);
+    return () => window.removeEventListener("hashchange", sync);
+  }, []);
+  const currentView = WORKSPACES.find((view) => view.id === workspace)!;
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [openNode, setOpenNode] = useState<string | null>(null);
 
@@ -43,21 +51,27 @@ export default function App() {
             show, and burying it below two node cards meant the first thing
             anyone read was a CPU graph. */}
         <ThroughputHero totals={snapshot.totals} history={history} themeKey={resolved} />
-        <InferenceView nodes={snapshot.nodes} history={history} themeKey={resolved} />
+        {workspace !== "overview" && <InferenceView nodes={snapshot.nodes} history={history} themeKey={resolved} />}
       </div>
     ),
     runs: snapshot && <RunsView />,
-    fabric: snapshot && <FabricView snap={snapshot} history={history} themeKey={resolved} />,
+    fabric: snapshot && <FabricView snap={snapshot} history={history} themeKey={resolved} compact={workspace === "overview"} />,
     jobs: snapshot && <Jobs jobs={snapshot.jobs} />,
     charts: snapshot && <ClusterCharts snap={snapshot} history={history} themeKey={resolved} />,
     controls: snapshot && <ControlsView nodes={snapshot.nodes} />,
   };
 
-  const visible = layout.order.filter((id) => !layout.hidden.includes(id));
+  const visible = workspaceSections(workspace, layout.order, layout.hidden);
 
   return (
     <DensityContext.Provider value={layout.density}>
       <div className="min-h-full">
+        <a href="#main-content" className="skip-link" onClick={(event) => {
+          event.preventDefault();
+          const main = document.getElementById("main-content");
+          main?.focus();
+          main?.scrollIntoView({ block: "start" });
+        }}>Skip to dashboard</a>
         <Header
           conn={conn}
           staleMs={staleMs}
@@ -67,16 +81,34 @@ export default function App() {
           onOpenSettings={() => setSettingsOpen(true)}
         />
 
-        <main className={`mx-auto flex max-w-[1680px] flex-col ${gap} px-3 pb-10 pt-3 sm:px-4 xl:pl-10`}>
+        <main id="main-content" tabIndex={-1} className={`mx-auto flex max-w-[1680px] flex-col ${gap} px-3 pb-8 pt-4 sm:px-6`}>
+          <div className="dashboard-heading flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <div className="mb-1 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-muted">
+                <span className="h-1.5 w-1.5 rounded-full bg-[var(--accent)]" /> Cluster observability
+              </div>
+              <h1 className="text-[22px] font-semibold leading-tight tracking-[-0.035em] text-ink">{workspace === "overview" ? "Your cluster, at a glance." : currentView.label}</h1>
+              <p className="mt-1 text-[12px] text-ink-secondary">{currentView.description}</p>
+            </div>
+            <nav aria-label="Dashboard views" className="dashboard-nav flex max-w-full items-center gap-1 overflow-x-auto rounded-xl border border-edge bg-surface-1 p-1">
+              {WORKSPACES.map((view) => (
+                <a key={view.id} href={`#${view.id}`} aria-current={view.id === workspace ? "page" : undefined}
+                  className={`shrink-0 rounded-lg px-3 py-2 text-[11px] font-medium transition-colors ${view.id === workspace ? "bg-surface-hover text-ink shadow-sm" : "text-ink-muted hover:bg-surface-2 hover:text-ink"}`}>
+                  {view.label}
+                </a>
+              ))}
+            </nav>
+          </div>
           {!snapshot ? (
             <LoadingSkeleton label={conn === "open" ? "Waiting for the first snapshot…" : "Connecting to sparktop server…"} />
           ) : snapshot.nodes.length === 0 ? (
             <Setup onAdded={refreshConfig} />
           ) : (
             <>
+              {visible.length === 0 && <div className="rounded-xl border border-edge p-6 text-center text-[13px] text-ink-secondary">These panels are hidden in your layout. <button className="cursor-pointer font-medium text-ink underline" onClick={() => setSettingsOpen(true)}>Show panels in settings</button></div>}
               {visible.map((id, i) => (
                 <div key={id} className="card-enter" style={{ "--i": i } as CSSProperties}>
-                <Sortable
+                {workspace === "all" ? <Sortable
                   key={id}
                   index={layout.order.indexOf(id)}
                   count={layout.order.length}
@@ -84,7 +116,7 @@ export default function App() {
                   onMove={layout.move}
                 >
                   {sections[id]}
-                </Sortable>
+                </Sortable> : <section aria-label={SECTIONS.find((s) => s.id === id)?.label}>{sections[id]}</section>}
                 </div>
               ))}
             </>
@@ -164,7 +196,7 @@ function Header({
         which is why the zones are flex with an explicit order rather than a
         three-column grid.
       */}
-      <div className="mx-auto flex max-w-[1800px] flex-wrap items-center gap-x-4 gap-y-1.5 px-4 py-2 xl:pl-10">
+      <div className="mx-auto flex max-w-[1680px] flex-wrap items-center gap-x-4 gap-y-1.5 px-3 py-2 sm:px-6">
         <span className="order-1 flex items-center gap-2 text-[17px] font-bold tracking-[-0.02em] text-ink">
           <span
             aria-hidden

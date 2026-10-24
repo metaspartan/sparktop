@@ -18,9 +18,10 @@ interface Props {
   snap: ClusterSnapshot;
   history: HistoryPayload | null;
   themeKey: string;
+  compact?: boolean;
 }
 
-export function FabricView({ snap, history, themeKey }: Props) {
+export function FabricView({ snap, history, themeKey, compact = false }: Props) {
   const { links } = snap.fabric;
   const labels = useMemo(() => linkLabels(links), [links]);
 
@@ -34,7 +35,7 @@ export function FabricView({ snap, history, themeKey }: Props) {
           </span>
         }
       >
-        <Topology snap={snap} />
+        <Topology snap={snap} compact={compact} />
       </Card>
 
       <Card
@@ -58,7 +59,7 @@ export function FabricView({ snap, history, themeKey }: Props) {
         <LinkChart links={links} history={history} themeKey={themeKey} labels={labels} />
       </Card>
 
-      <Card title="Links" className="lg:col-span-2" bodyClass="p-0">
+      {!compact && <Card title="Links" className="lg:col-span-2" bodyClass="p-0">
         <LinkTable links={links} />
         {/* Switched segments have no pairwise link, so the table would silently
             omit those ports. Explaining it here keeps the context next to the
@@ -75,7 +76,7 @@ export function FabricView({ snap, history, themeKey }: Props) {
             ))}
           </div>
         )}
-      </Card>
+      </Card>}
     </div>
   );
 }
@@ -130,7 +131,7 @@ function usePrefersReducedMotion(): boolean {
   return reduced;
 }
 
-function Topology({ snap }: { snap: ClusterSnapshot }) {
+function Topology({ snap, compact = false }: { snap: ClusterSnapshot; compact?: boolean }) {
   const nodes = snap.nodes;
   const reducedMotion = usePrefersReducedMotion();
   /*
@@ -199,7 +200,7 @@ function Topology({ snap }: { snap: ClusterSnapshot }) {
   const pairSeen = new Map<string, number>();
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ maxHeight: H }} role="img"
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ maxHeight: compact ? 210 : H }} role="img"
       aria-label="Cluster interconnect topology">
       <defs>
         {/* A top-lit card rather than a flat rectangle: the diagram is the

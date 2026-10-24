@@ -418,6 +418,8 @@ export interface EngineReading {
   requestsFinishedTotal?: number;
   promptTokensTotal?: number;
   generationTokensTotal?: number;
+  /** Tokens emitted by unfinished requests; TensorFold commits its counter only at completion. */
+  generationTokensRunning?: number;
   /** Prompt tokens served from cache rather than computed. */
   cachedPromptTokensTotal?: number;
   /** Speculative decoding counters, when the engine reports them. */
@@ -610,6 +612,7 @@ export function readMetrics(metricsText: string): EngineReading | null {
   set("requestsFinishedTotal", sumMetric(samples, spec.finished));
   set("promptTokensTotal", sumMetric(samples, spec.promptTokens));
   set("generationTokensTotal", sumMetric(samples, spec.genTokens));
+  if (spec.id === "tensorfold") set("generationTokensRunning", sumMetric(samples, ["tensorfold:generation_tokens_running"]));
   set("cachedPromptTokensTotal", sumMetric(samples, spec.cachedPromptTokens));
   set("specAcceptedTotal", sumMetric(samples, spec.specDecode.accepted));
   set("specDraftedTotal", sumMetric(samples, spec.specDecode.drafted));

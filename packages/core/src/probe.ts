@@ -219,10 +219,14 @@ export function buildFastProbe(endpoints: DiscoveredEndpoint[] = []): string {
        * that latency means are computed from, so keeping buckets silently costs
        * every latency figure. Percentiles would need them; means do not.
        */
-      const fetchCmd =
-        e.kind === "metrics"
-          ? `curl -s -m 2 ${e.port === 8888 ? `-H @"$HOME/.config/sparktop/inference-8888.headers"` : ""} '${url}' 2>/dev/null | grep -E '^(tensorfold:|vllm:|sglang:|llamacpp:|tgi_|nv_inference)' | grep -vE '_bucket[{ ]|_created[{ ]' | head -c 16384`
-          : `curl -s -m 2 ${e.port === 8888 ? `-H @"$HOME/.config/sparktop/inference-8888.headers"` : ""} '${url}' 2>/dev/null | head -c 4096`;
+      // Optional node-local auth. A missing file must not break otherwise
+      // unauthenticated inference endpoints on the standard port.
+      const curl = e.port === 8888
+        ? `{ if [ -r "$HOME/.config/sparktop/inference-8888.headers" ]; then curl -s -m 2 -H @"$HOME/.config/sparktop/inference-8888.headers" '${url}'; else curl -s -m 2 '${url}'; fi; }`
+        : `curl -s -m 2 '${url}'`;
+      const fetchCmd = e.kind === "metrics"
+        ? `${curl} 2>/dev/null | grep -E '^(tensorfold:|vllm:|sglang:|llamacpp:|tgi_|nv_inference)' | grep -vE '_bucket[{ ]|_created[{ ]' | head -c 16384`
+        : `${curl} 2>/dev/null | head -c 4096`;
       return [
         `printf 'EP${US}%s${US}%s\\n' '${e.port}' '${e.kind}'`,
         fetchCmd,
@@ -446,4 +450,3 @@ export function buildSlowProbe(opts: { identify?: boolean; stats?: boolean } = {
 
 /** Every section, for callers that do not track probe state. */
 export const SLOW_PROBE = buildSlowProbe({ identify: true, stats: true });
-

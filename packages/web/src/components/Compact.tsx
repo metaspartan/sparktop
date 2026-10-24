@@ -88,6 +88,7 @@ export function Kpi({
   spark,
   sparkMax,
   display,
+  dense = false,
 }: {
   icon: IconName;
   label: string;
@@ -100,6 +101,7 @@ export function Kpi({
   sparkMax?: number;
   /** Override the formatted value (e.g. "1 · 0"). Disables the tween. */
   display?: string;
+  dense?: boolean;
 }) {
   const shown = useTween(display !== undefined ? null : value);
   return (
@@ -115,7 +117,7 @@ export function Kpi({
         {unit && <span className="text-[11px] font-medium text-ink-muted">{unit}</span>}
       </div>
       <div className="mt-0.5 h-4 truncate text-[10.5px] text-ink-muted">{sub}</div>
-      <div className="-mx-3 mt-auto">{spark && spark.length > 1 ? <Spark values={spark} color={color} height={26} max={sparkMax} /> : <div className="h-[26px]" />}</div>
+      <div className="-mx-3 mt-auto">{spark && spark.length > 1 ? <Spark values={spark} color={color} height={dense ? 14 : 26} max={sparkMax} /> : <div style={{ height: dense ? 14 : 26 }} />}</div>
     </div>
   );
 }
@@ -283,9 +285,9 @@ export const NodeTile = memo(function NodeTile({
           <span className="flex items-center gap-1.5"><Icon name="layers" size={12} /> <b className="tnum font-medium text-ink-secondary">{g?.processes.length ?? 0}</b> GPU procs</span>
           <span className="flex items-center gap-1.5"><Icon name="activity" size={12} /> probe <b className="tnum font-medium text-ink-secondary">{node.probeMs} ms</b></span>
           {ep?.perRequestDecodeTokensPerSec != null && (
-            <span className="ml-auto flex items-center gap-1.5 text-ink-secondary">
-              <Icon name="bolt" size={12} className="text-[var(--accent)]" />
-              <b className="tnum font-semibold text-ink">{ep.perRequestDecodeTokensPerSec.toFixed(1)}</b> tok/s
+            <span className="ml-auto flex items-center gap-1.5 text-ink-secondary" title={ep.latencyBasis === "lifetime" ? "Last measured per-request rate, not current throughput" : "Per-request decode rate"}>
+              <Icon name="bolt" size={12} className={ep.latencyBasis === "lifetime" ? "text-ink-muted" : "text-[var(--accent)]"} />
+              <b className="tnum font-semibold text-ink">{ep.perRequestDecodeTokensPerSec.toFixed(1)}</b> tok/s{ep.latencyBasis === "lifetime" && <span className="text-ink-muted">last</span>}
             </span>
           )}
         </footer>

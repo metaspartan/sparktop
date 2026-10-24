@@ -692,7 +692,11 @@ export class NodeCollector extends EventEmitter {
       }
 
       const prev = this.prevInference.get(key);
-      const gen = reading.generationTokensTotal;
+      const completedGen = reading.generationTokensTotal;
+      // TensorFold commits token totals only when a request finishes. Adding
+      // live tokens yields the same advancing counter before AND after that
+      // handoff; keep the completed total unchanged for history/accounting.
+      const gen = completedGen === undefined ? undefined : completedGen + (reading.generationTokensRunning ?? 0);
       const prompt = reading.promptTokensTotal;
       const finished = reading.requestsFinishedTotal;
 
@@ -874,7 +878,7 @@ export class NodeCollector extends EventEmitter {
         requestsWaiting: reading.requestsWaiting ?? null,
         requestsFinishedTotal: finished ?? null,
         promptTokensTotal: prompt ?? null,
-        generationTokensTotal: gen ?? null,
+        generationTokensTotal: completedGen ?? null,
         kvCachePct: reading.kvCachePct === undefined ? null : Math.round(reading.kvCachePct * 10) / 10,
         decodeTokensPerSec: genRate,
         prefillTokensPerSec: promptRate,

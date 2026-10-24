@@ -168,6 +168,7 @@ describe("inference series", () => {
     const row = historySample(
       snapshotWithEndpoint({
         perRequestDecodeTokensPerSec: 11.4,
+        latencyBasis: "window",
         interTokenLatencyMs: 87.8,
         specAcceptanceRatePct: 90.9,
         kvCachePct: 42,
@@ -194,6 +195,7 @@ describe("inference series", () => {
     s.totals = {
       ...s.totals,
       perRequestTokensPerSec: 11.4,
+      latencyBasis: "window",
       interTokenLatencyMs: 87.8,
       requestsPerMin: 6,
       specAcceptancePct: 90.9,
@@ -208,4 +210,16 @@ describe("inference series", () => {
     expect(row["cluster:cacheHit"]).toBe(92.7);
     expect(row["cluster:kv"]).toBe(42);
   });
+});
+// Idle lifetime estimates must not become continuous live throughput.
+test("idle throughput is a gap while the last measured headline stays available", () => {
+  const snap = snapshotWithEndpoint({ perRequestDecodeTokensPerSec: 68.5, latencyBasis: "lifetime" });
+  snap.totals.perRequestTokensPerSec = 68.5;
+  snap.totals.latencyBasis = "lifetime";
+  const row = historySample(snap);
+  expect(Number.isNaN(row["cluster:perReq"])).toBe(true);
+  expect(Number.isNaN(row["infer:n1:8888:perReq"])).toBe(true);
+  expect(snap.totals.perRequestTokensPerSec).toBe(68.5);
+  snap.totals.latencyBasis = "window";
+  expect(historySample(snap)["cluster:perReq"]).toBe(68.5);
 });

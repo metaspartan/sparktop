@@ -7,15 +7,51 @@
 One place to watch every Spark you own — the GPUs, the containers, the models
 they are serving, and the RDMA fabric between them.
 
-[Quick start](#quick-start) · [Interconnect](#interconnect) · [TUI](#terminal-ui) · [API](#http-api) · [Configuration](#configuration)
+[Quick start](#quick-start) · [Dashboard](#web-dashboard) · [Interconnect](#interconnect) · [TUI](#terminal-ui) · [API](#http-api) · [Configuration](#configuration)
 
 [![CI](https://github.com/metaspartan/sparktop/actions/workflows/ci.yml/badge.svg)](https://github.com/metaspartan/sparktop/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![Platform](https://img.shields.io/badge/arch-arm64%20%7C%20amd64-informational)
+![Bun](https://img.shields.io/badge/Bun-1.4.4-f9f1e1?logo=bun&logoColor=f9f1e1)
 
 </div>
 
 ---
+
+[![Sparktop overview — live GPU telemetry, inference throughput and RDMA topology across two Sparks](docs/images/dashboard.png)](docs/images/dashboard.png)
+
+*The real web dashboard on two ASUS Ascent GX10 nodes, with live inference and RDMA telemetry. Values are workload-dependent, not a benchmark claim.*
+
+## Web dashboard
+
+**See the whole cluster, not a wall of charts.** The default overview brings live
+decode throughput, compact node cards and the RDMA fabric together. Open a node
+for processes, temperatures and storage; switch workspaces for deeper detail.
+
+| View | What you get |
+| --- | --- |
+| **Overview** | Per-request decode speed, aggregate throughput, both-node health and fabric traffic |
+| **Inference** | Request queues, latency, token history and past serving runs |
+| **Fabric** | Cable topology, per-direction RDMA traffic, link health and distributed jobs |
+| **System** | Resource comparison charts, node details and opt-in container controls |
+| **All panels** | Every panel, retaining your saved order and visibility preferences |
+
+Views are directly linkable (`/#fabric`, `/#inference`), with light/dark themes,
+keyboard focus states, reduced-motion support and responsive layouts. The
+throughput chart offers 2-minute, 10-minute and full-history ranges.
+
+Engine detection supports **TensorFold, vLLM, SGLang, llama.cpp, TGI, Triton and
+Ollama**, plus generic OpenAI-compatible model discovery. Where an engine
+exports the counters, Sparktop separates per-request decode speed from total
+throughput, keeps prefix-cache savings distinct from computed input, and labels
+lifetime averages when idle. TensorFold live tokens are included in throughput
+before a request completes—without adding them twice to completed-token totals.
+
+For an authenticated local inference endpoint on port 8888, the collector can
+read an optional `~/.config/sparktop/inference-8888.headers` file **on that node**
+containing `Authorization: Bearer <your-key>`. Keep it readable only by the SSH
+user (`chmod 600`). The file is never sent to the browser; absent files do not
+break unauthenticated endpoints.
 
 ## Quick start
 

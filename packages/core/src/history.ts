@@ -144,7 +144,7 @@ export function historySample(snap: ClusterSnapshot): Record<string, number> {
        * is redundant: together their ratio is the batch size, which is the
        * single most useful thing to see when a server feels slow.
        */
-      out[`infer:${e.id}:perReq`] = e.perRequestDecodeTokensPerSec ?? NaN;
+      out[`infer:${e.id}:perReq`] = e.latencyBasis === "window" ? e.perRequestDecodeTokensPerSec ?? NaN : NaN;
       out[`infer:${e.id}:itl`] = e.interTokenLatencyMs ?? NaN;
       out[`infer:${e.id}:kv`] = e.kvCachePct ?? NaN;
       out[`infer:${e.id}:cacheHit`] = e.promptCacheHitPct ?? NaN;
@@ -165,7 +165,8 @@ export function historySample(snap: ClusterSnapshot): Record<string, number> {
   out["cluster:cachedTotal"] = snap.totals.cachedPromptTokensTotal;
   // Fleet-wide per-request speed and its reciprocal, so the header and the
   // charts read from one source and cannot disagree.
-  out["cluster:perReq"] = snap.totals.perRequestTokensPerSec ?? NaN;
+  // Lifetime estimates belong in the idle headline, not a fake live chart.
+  out["cluster:perReq"] = snap.totals.latencyBasis === "window" ? snap.totals.perRequestTokensPerSec ?? NaN : NaN;
   out["cluster:itl"] = snap.totals.interTokenLatencyMs ?? NaN;
   out["cluster:rpm"] = snap.totals.requestsPerMin;
   out["cluster:specAccept"] = snap.totals.specAcceptancePct ?? NaN;

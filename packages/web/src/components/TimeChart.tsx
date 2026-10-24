@@ -111,6 +111,7 @@ export function TimeChart({
           grid: { show: false },
           ticks: { show: false },
           size: 26,
+          space: 80, // keep wall-clock labels legible at phone and laptop widths
           gap: 4,
           font: "11px system-ui, sans-serif",
           // Wall-clock time, so a reading can be lined up against something
