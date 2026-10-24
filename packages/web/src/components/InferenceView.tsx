@@ -305,7 +305,7 @@ function TokenHistoryCard({
 
   return (
     <Card
-      
+
       title="Input and output tokens"
       right={
         <div className="flex items-center gap-3">
