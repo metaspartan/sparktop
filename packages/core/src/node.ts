@@ -1037,12 +1037,13 @@ export class NodeCollector extends EventEmitter {
        */
       let rdmaRx = eth?.get("rx_vport_rdma_unicast_bytes");
       let rdmaTx = eth?.get("tx_vport_rdma_unicast_bytes");
-      if (rdmaRx === undefined || rdmaTx === undefined) {
+      const usedIbFallback = rdmaRx === undefined || rdmaTx === undefined;
+      if (usedIbFallback) {
         rdmaRx = (sys?.counters.get("port_rcv_data") ?? 0) * IB_WORD_BYTES;
         rdmaTx = (sys?.counters.get("port_xmit_data") ?? 0) * IB_WORD_BYTES;
       }
-      const tcpRx = eth?.get("rx_vport_unicast_bytes") ?? nd?.rxBytes ?? 0;
-      const tcpTx = eth?.get("tx_vport_unicast_bytes") ?? nd?.txBytes ?? 0;
+      const tcpRx = usedIbFallback ? 0 : (eth?.get("rx_vport_unicast_bytes") ?? nd?.rxBytes ?? 0);
+      const tcpTx = usedIbFallback ? 0 : (eth?.get("tx_vport_unicast_bytes") ?? nd?.txBytes ?? 0);
 
       const prev = this.prevFabric.get(ibdev);
       const rdmaRxBps = ratePerSec(prev?.rdmaRx, rdmaRx, ts);

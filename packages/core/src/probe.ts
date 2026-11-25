@@ -225,7 +225,7 @@ export function buildFastProbe(endpoints: DiscoveredEndpoint[] = []): string {
         ? `{ if [ -r "$HOME/.config/sparktop/inference-8888.headers" ]; then curl -s -m 2 -H @"$HOME/.config/sparktop/inference-8888.headers" '${url}'; else curl -s -m 2 '${url}'; fi; }`
         : `curl -s -m 2 '${url}'`;
       const fetchCmd = e.kind === "metrics"
-        ? `${curl} 2>/dev/null | grep -E '^(tensorfold:|vllm:|sglang:|llamacpp:|tgi_|nv_inference)' | grep -vE '_bucket[{ ]|_created[{ ]' | head -c 16384`
+        ? `${curl} 2>/dev/null | grep -E '^(rad_|tensorfold:|vllm:|sglang:|llamacpp:|tgi_|nv_inference)' | grep -vE '_bucket[{ ]|_created[{ ]' | head -c 16384`
         : `${curl} 2>/dev/null | head -c 4096`;
       return [
         `printf 'EP${US}%s${US}%s\\n' '${e.port}' '${e.kind}'`,
@@ -341,7 +341,7 @@ for p in \$(ss -tlnH 2>/dev/null | awk '{print \$4}' | grep -vE '^10\.100\.' | s
   # truncating the response before matching finds nothing at all.
   auth=""; [ "\$p" != 8888 ] || { [ ! -r "\$HOME/.config/sparktop/inference-8888.headers" ] || auth="\$HOME/.config/sparktop/inference-8888.headers"; }
   sig=\$(curl \${auth:+-H @"\$auth"} -s --connect-timeout 1 -m 1 "http://127.0.0.1:\$p/metrics" 2>/dev/null \\
-        | grep -m1 -oE '^(tensorfold:|vllm:|sglang:|llamacpp:|tgi_|nv_inference)')
+        | grep -m1 -oE '^(rad_|tensorfold:|vllm:|sglang:|llamacpp:|tgi_|nv_inference)')
   if [ -n "\$sig" ]; then
     # Ask what model is loaded.
     #

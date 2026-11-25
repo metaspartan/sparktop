@@ -15,6 +15,7 @@
  */
 
 export type EngineId =
+  | "rad"
   | "tensorfold"
   | "vllm"
   | "sglang"
@@ -115,6 +116,42 @@ export interface EngineSpec {
  * falling through a list is cheaper than pinning a version.
  */
 export const ENGINE_SPECS: EngineSpec[] = [
+  {
+    id: "rad",
+    label: "RAD",
+    signature: /^rad_/m,
+    running: ["rad_requests_active"],
+    waiting: ["rad_requests_queued"],
+    promptTokens: ["rad_prompt_tokens_total"],
+    genTokens: ["rad_generated_tokens_total"],
+    finished: ["rad_requests_completed_total", "rad_request_generation_tokens_count"],
+    kvCache: ["rad_kv_cache_usage_ratio"],
+    kvCacheScale: 100,
+    latency: {
+      ttft: ["rad_ttft_seconds"],
+      interToken: ["rad_itl_seconds"],
+      e2e: [],
+      queue: [],
+      prefill: ["rad_prefill_seconds"],
+      decode: ["rad_decode_seconds"],
+    },
+    requestGenTokens: ["rad_request_generation_tokens"],
+    cachedPromptTokens: ["rad_prefix_cache_tokens_saved_total"],
+    specDecode: {
+      accepted: ["rad_spec_accepted_tokens_total"],
+      drafted: ["rad_spec_drafted_tokens_total"],
+      drafts: ["rad_spec_rounds_total"],
+      perPos: [],
+    },
+    mmCache: { hits: [], queries: [] },
+    prefixCache: {
+      hits: ["rad_prefix_cache_hits_total"],
+      queries: ["rad_prefix_cache_queries_total"],
+    },
+    estimatedFlops: [],
+    estimatedReadBytes: [],
+    estimatedWriteBytes: [],
+  },
   {
     id: "vllm",
     label: "vLLM",

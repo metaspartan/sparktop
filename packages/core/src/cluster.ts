@@ -257,9 +257,10 @@ function buildLink(subnet: string, a: PortRef, b: PortRef): FabricLink {
   const bTx = b.port.rdmaTxBps + b.port.tcpTxBps;
   const aRx = a.port.rdmaRxBps + a.port.tcpRxBps;
 
-  // Each direction is observed twice: once as a transmit, once as a receive.
-  const aToB = Math.max(aTx, bRx) * BYTES_TO_GBPS;
-  const bToA = Math.max(bTx, aRx) * BYTES_TO_GBPS;
+  const combineDir = (tx: number, rx: number): number =>
+    tx > 0 && rx > 0 ? (tx + rx) * 0.5 : Math.max(tx, rx);
+  const aToB = combineDir(aTx, bRx) * BYTES_TO_GBPS;
+  const bToA = combineDir(bTx, aRx) * BYTES_TO_GBPS;
   const confirmed = agrees(aTx, bRx) && agrees(bTx, aRx);
 
   /*
@@ -296,8 +297,8 @@ function buildLink(subnet: string, a: PortRef, b: PortRef): FabricLink {
     signalledRateGbps,
     pcieLimited: a.port.pcieLimited || b.port.pcieLimited,
     up: a.port.linkUp && b.port.linkUp,
-    aToBGbps: round2(aToB),
-    bToAGbps: round2(bToA),
+    aToBGbps: round3(aToB),
+    bToAGbps: round3(bToA),
     utilPct,
     active: Math.max(aTx, bRx, bTx, aRx) > ACTIVE_THRESHOLD_BPS,
     confirmed,
@@ -314,6 +315,7 @@ function agrees(x: number, y: number): boolean {
 }
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
+const round3 = (n: number): number => Math.round(n * 1000) / 1000;
 
 function summarizeFabric(
   nodes: NodeSnapshot[],
@@ -411,7 +413,7 @@ export function inferJobs(nodes: NodeSnapshot[], links: FabricLink[]): Distribut
     const nodeIds = new Set(job.members.map((m) => m.nodeId));
     const related = links.filter((l) => nodeIds.has(l.a.nodeId) && nodeIds.has(l.b.nodeId));
     job.linkIds = related.map((l) => l.id);
-    job.trafficGbps = round2(related.reduce((a, l) => a + l.aToBGbps + l.bToAGbps, 0));
+    job.trafficGbps = round2(related.reduce((a, l) => a + Math.max(l.aToBGbps, l.bToAGbps), 0));
     jobs.push(job);
   }
   return jobs.sort((a, b) => b.trafficGbps - a.trafficGbps);

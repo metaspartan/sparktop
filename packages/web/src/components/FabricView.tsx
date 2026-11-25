@@ -232,7 +232,7 @@ function Topology({ snap, compact = false }: { snap: ClusterSnapshot; compact?: 
         const my = (a.y + b.y) / 2 + oy;
         const d = `M ${a.x} ${a.y} Q ${mx} ${my} ${b.x} ${b.y}`;
         const color = `var(--series-${(i % 4) + 1})`;
-        const total = l.aToBGbps + l.bToAGbps;
+        const total = Math.max(l.aToBGbps, l.bToAGbps);
         const width = l.active ? Math.min(7, 2 + (l.utilPct / 100) * 5) : 2;
 
         const pathId = `topo-path-${i}`;
@@ -608,11 +608,10 @@ function LinkChart({
         return {
           label: labels.get(l.id) ?? l.id,
           colorVar: `--series-${i + 1}`,
-          // Both directions summed: total moved over the cable.
           values: ab.map((v, k) => {
             const other = ba[k];
             if (v === null || other === null || other === undefined) return null;
-            return Math.round((v + other) * 100) / 100;
+            return Math.round(Math.max(v, other) * 1000) / 1000;
           }),
         };
       }),
